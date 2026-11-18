@@ -51,10 +51,19 @@ class SearchRequest
     private \DateTimeImmutable $createdAt;
 
     /**
+     * @var Collection<int, Listing>
+     */
+    #[ORM\OneToMany(targetEntity: Listing::class, mappedBy: 'searchRequest', orphanRemoval: true)]
+    private Collection $listings;
+
+    /**
      * @var Collection<int, ListingEvaluation>
      */
     #[ORM\OneToMany(targetEntity: ListingEvaluation::class, mappedBy: 'searchRequest', orphanRemoval: true)]
     private Collection $evaluations;
+
+    #[ORM\OneToOne(targetEntity: CronTask::class, mappedBy: 'searchRequest', cascade: ['persist', 'remove'], orphanRemoval: true)]
+    private ?CronTask $cronTask = null;
 
     /**
      * @param list<string> $enabledProviders
@@ -72,6 +81,7 @@ class SearchRequest
         $this->userRequirements = $userRequirements;
         $this->enabledProviders = $enabledProviders;
         $this->createdAt = new \DateTimeImmutable();
+        $this->listings = new ArrayCollection();
         $this->evaluations = new ArrayCollection();
     }
 
@@ -144,10 +154,30 @@ class SearchRequest
     }
 
     /**
+     * @return Collection<int, Listing>
+     */
+    public function getListings(): Collection
+    {
+        return $this->listings;
+    }
+
+    /**
      * @return Collection<int, ListingEvaluation>
      */
     public function getEvaluations(): Collection
     {
         return $this->evaluations;
+    }
+
+    public function getCronTask(): ?CronTask
+    {
+        return $this->cronTask;
+    }
+
+    public function setCronTask(?CronTask $cronTask): self
+    {
+        $this->cronTask = $cronTask;
+
+        return $this;
     }
 }

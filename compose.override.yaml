@@ -26,6 +26,27 @@ services:
       # Ensure that host.docker.internal is correctly defined on Linux
       - host.docker.internal:host-gateway
     tty: true
+
+  worker:
+    image: ${IMAGES_PREFIX:-}app-php-dev
+    build:
+      context: .
+      target: frankenphp_dev
+    command: ["php", "bin/console", "messenger:consume", "scheduler_default", "async", "--time-limit=3600", "--memory-limit=256M", "-vv"]
+    restart: unless-stopped
+    volumes:
+      - ./:/app
+      - /app/var
+    environment:
+      APP_ENV: "${APP_ENV:-dev}"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-!ChangeMe!}@database:5432/${POSTGRES_DB:-app}?serverVersion=${POSTGRES_VERSION:-16}&charset=${POSTGRES_CHARSET:-utf8}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      disable: true
+    depends_on:
+      database:
+        condition: service_healthy
 ###> symfony/mercure-bundle ###
 ###< symfony/mercure-bundle ###
 

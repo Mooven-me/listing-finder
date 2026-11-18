@@ -8,6 +8,7 @@ use App\Entity\Listing;
 use App\Enum\SearchStatus;
 use App\Message\EvaluateListingMessage;
 use App\Message\FetchSubTopicListingsMessage;
+use App\Repository\ListingEvaluationRepository;
 use App\Repository\ListingRepository;
 use App\Repository\SearchRequestRepository;
 use App\Service\Provider\ListingProviderRegistry;
@@ -23,6 +24,7 @@ class FetchSubTopicListingsHandler
     public function __construct(
         private readonly SearchRequestRepository $searchRequestRepository,
         private readonly ListingRepository $listingRepository,
+        private readonly ListingEvaluationRepository $evaluationRepository,
         private readonly ListingProviderRegistry $providerRegistry,
         private readonly EntityManagerInterface $entityManager,
         private readonly MessageBusInterface $messageBus,
@@ -54,17 +56,38 @@ class FetchSubTopicListingsHandler
             $message->limit,
         );
 
-        $listingIdsToEvaluate = [];
+        $newListingIdsToEvaluate = [];
 
         foreach ($fetchedDtos as $dto) {
-            $lockKey = sprintf('listing-upsert-%s-%s', $dto->provider, sha1($dto->externalId));
+            $lockKey = sprintf(
+                'listing-upsert-%d-%s-%s',
+                $message->searchRequestId,
+                $dto->provider,
+                sha1($dto->externalId),
+            );
             $lock = $this->lockFactory->createLock($lockKey, 30.0);
             $lock->acquire(true);
 
             try {
-                $listing = $this->listingRepository->findOneByProviderAndExternalId($dto->provider, $dto->externalId);
-                if (null === $listing) {
+                $listing = $this->listingRepository->findOneBySearchProviderAndExternalId(
+                    $searchRequest,
+                    $dto->provider,
+                    $dto->externalId,
+                );
+
+                if (null !== $listing) {
+                    if ($listing->isComputed() || null !== $this->evaluationRepository->findOneBySearchAndListing($searchRequest, $listing)) {
+                        $this->logger->debug('Skipping already computed listing for search request.', [
+                            'searchRequestId' => $message->searchRequestId,
+                            'provider' => $dto->provider,
+                            'externalId' => $dto->externalId,
+                        ]);
+
+                        continue;
+                    }
+                } else {
                     $listing = new Listing(
+                        searchRequest: $searchRequest,
                         provider: $dto->provider,
                         externalId: $dto->externalId,
                         searchTopicUsed: $message->subTopic,
@@ -78,26 +101,18 @@ class FetchSubTopicListingsHandler
                         publishedAt: $dto->publishedAt,
                     );
                     $this->entityManager->persist($listing);
-                } else {
-                    $listing
-                        ->setTitle($dto->title)
-                        ->setPrice($dto->price)
-                        ->setDescription($dto->description)
-                        ->setImageUrls($dto->imageUrls)
-                        ->setConditionState($dto->conditionState);
+                    $this->entityManager->flush();
                 }
 
-                $this->entityManager->flush();
-
                 if (null !== $listing->getId()) {
-                    $listingIdsToEvaluate[] = $listing->getId();
+                    $newListingIdsToEvaluate[] = $listing->getId();
                 }
             } finally {
                 $lock->release();
             }
         }
 
-        foreach (array_unique($listingIdsToEvaluate) as $listingId) {
+        foreach (array_unique($newListingIdsToEvaluate) as $listingId) {
             $this->messageBus->dispatch(new EvaluateListingMessage(
                 searchRequestId: $message->searchRequestId,
                 listingId: $listingId,

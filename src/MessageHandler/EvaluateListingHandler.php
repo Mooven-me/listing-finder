@@ -52,8 +52,12 @@ class EvaluateListingHandler
                 return;
             }
 
-            $existing = $this->evaluationRepository->findOneBySearchAndListing($searchRequest, $listing);
-            if (null !== $existing) {
+            if ($listing->isComputed() || null !== $this->evaluationRepository->findOneBySearchAndListing($searchRequest, $listing)) {
+                if (!$listing->isComputed()) {
+                    $listing->setIsComputed(true);
+                    $this->entityManager->flush();
+                }
+
                 return;
             }
 
@@ -73,6 +77,7 @@ class EvaluateListingHandler
                 estimatedAge: $resultDto->estimatedAge,
             );
 
+            $listing->setIsComputed(true);
             $this->entityManager->persist($evaluation);
             $searchRequest->setStatus(SearchStatus::Completed);
             $this->entityManager->flush();

@@ -10,13 +10,17 @@ use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity(repositoryClass: ListingRepository::class)]
 #[ORM\Table(name: 'listing')]
-#[ORM\UniqueConstraint(name: 'uniq_listing_provider_external_id', columns: ['provider', 'external_id'])]
+#[ORM\UniqueConstraint(name: 'uniq_listing_search_provider_external_id', columns: ['search_request_id', 'provider', 'external_id'])]
 class Listing
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
     private ?int $id = null;
+
+    #[ORM\ManyToOne(targetEntity: SearchRequest::class, inversedBy: 'listings')]
+    #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
+    private SearchRequest $searchRequest;
 
     #[ORM\Column(length: 64)]
     private string $provider;
@@ -54,6 +58,9 @@ class Listing
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
     private ?\DateTimeImmutable $publishedAt;
 
+    #[ORM\Column(type: Types::BOOLEAN)]
+    private bool $isComputed = false;
+
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $fetchedAt;
 
@@ -61,6 +68,7 @@ class Listing
      * @param list<string> $imageUrls
      */
     public function __construct(
+        SearchRequest $searchRequest,
         string $provider,
         string $externalId,
         string $searchTopicUsed,
@@ -73,6 +81,7 @@ class Listing
         ?string $conditionState = null,
         ?\DateTimeImmutable $publishedAt = null,
     ) {
+        $this->searchRequest = $searchRequest;
         $this->provider = $provider;
         $this->externalId = $externalId;
         $this->searchTopicUsed = $searchTopicUsed;
@@ -90,6 +99,11 @@ class Listing
     public function getId(): ?int
     {
         return $this->id;
+    }
+
+    public function getSearchRequest(): SearchRequest
+    {
+        return $this->searchRequest;
     }
 
     public function getProvider(): string
@@ -186,6 +200,18 @@ class Listing
     public function getPublishedAt(): ?\DateTimeImmutable
     {
         return $this->publishedAt;
+    }
+
+    public function isComputed(): bool
+    {
+        return $this->isComputed;
+    }
+
+    public function setIsComputed(bool $isComputed): self
+    {
+        $this->isComputed = $isComputed;
+
+        return $this;
     }
 
     public function getFetchedAt(): \DateTimeImmutable
