@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: listing-finder-worker
+  namespace: listing-finder
+  labels:
+    app.kubernetes.io/name: listing-finder
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: listing-finder
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: listing-finder
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: listing-finder:prod
+          imagePullPolicy: IfNotPresent
+          command:
+            - php
+            - bin/console
+            - messenger:consume
+            - scheduler_default
+            - async
+            - --time-limit=3600
+            - --memory-limit=256M
+            - -vv
+          envFrom:
+            - configMapRef:
+                name: listing-finder-config
+            - secretRef:
+                name: listing-finder-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi

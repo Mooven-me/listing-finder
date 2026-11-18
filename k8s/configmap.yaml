@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: listing-finder-config
+  namespace: listing-finder
+data:
+  APP_ENV: "prod"
+  SERVER_NAME: ":80"
+  CADDY_GLOBAL_OPTIONS: "auto_https off"
+  DEFAULT_URI: "http://listing-finder.zt.home.arpa"
+  MESSENGER_TRANSPORT_DSN: "doctrine://default?auto_setup=0"
+  LOCK_DSN: "flock"
+  AI_PROVIDER: "ollama"
+  # Reaches host Ollama bound to 0.0.0.0:11434 via the Kubernetes node hostname (moovenserver)
+  # Override this if Ollama runs in-cluster or on another host.
+  AI_BASE_URL: "http://moovenserver:11434"
+  AI_MODEL: "lfm2.5:8b"
+  AI_VISION_MODEL: "lfm2.5:8b"
+  AI_TIMEOUT: "120"
+  LISTING_PROVIDERS_ENABLED: "leboncoin,vinted,backmarket"
+  LISTING_PROVIDER_FALLBACK_TO_MOCK: "false"
+  MERCURE_URL: "http://listing-finder-web/.well-known/mercure"
+  MERCURE_PUBLIC_URL: "https://listing-finder.zt.home.arpa/.well-known/mercure"
+  MERCURE_JWT_ISSUER: "https://listing-finder.zt.home.arpa"
+  MERCURE_TRUSTED_ISSUERS: "https://listing-finder.zt.home.arpa"
