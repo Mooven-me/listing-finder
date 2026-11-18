@@ -35,6 +35,8 @@ class SearchResultsCommand extends Command
     {
         $this
             ->addArgument('search', InputArgument::OPTIONAL, 'SearchRequest ID or topic substring (defaults to latest search)')
+            ->addArgument('category', InputArgument::OPTIONAL, 'Filter by a single category: "must_buy" (or "must-buy"), "good", "pass"')
+            ->addOption('category', null, InputOption::VALUE_REQUIRED, 'Filter by a single category: "must_buy" (or "must-buy"), "good", "pass"')
             ->addOption('all', 'a', InputOption::VALUE_NONE, 'Also display PASS listings scoring below 70/100')
             ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort mode: "category" (grouped into MUST BUY / GOOD / PASS) or "score" (single flat list sorted by score)', 'category')
             ->addOption('by-category', 'c', InputOption::VALUE_NONE, 'Shortcut for --sort=category (group results by category)')
@@ -47,7 +49,29 @@ class SearchResultsCommand extends Command
         $io = new SymfonyStyle($input, $output);
 
         $identifierArg = $input->getArgument('search');
-        $identifier = is_string($identifierArg) ? $identifierArg : null;
+        $identifier = is_string($identifierArg) && '' !== trim($identifierArg) ? trim($identifierArg) : null;
+
+        $categoryInput = $input->getOption('category') ?? $input->getArgument('category');
+        $rawCategoryFilter = is_string($categoryInput) && '' !== trim($categoryInput) ? trim($categoryInput) : null;
+
+        // Allow passing the category directly as the first argument when no search ID is specified (e.g. `app:search:results must_buy`)
+        if (null === $rawCategoryFilter && null !== $identifier && null !== $this->parseCategoryFilter($identifier)) {
+            $rawCategoryFilter = $identifier;
+            $identifier = null;
+        }
+
+        $selectedCategory = null;
+        if (null !== $rawCategoryFilter) {
+            $selectedCategory = $this->parseCategoryFilter($rawCategoryFilter);
+            if (null === $selectedCategory) {
+                $io->error(sprintf(
+                    'Invalid category "%s". Allowed values: "must_buy" (or "must-buy"), "good", "pass".',
+                    $rawCategoryFilter,
+                ));
+
+                return Command::INVALID;
+            }
+        }
 
         $searchRequest = $this->searchRequestRepository->findByIdentifierOrLatest($identifier);
         if (null === $searchRequest) {
@@ -70,7 +94,7 @@ class SearchResultsCommand extends Command
         }
 
         $isSortByScore = 'score' === $sortMode;
-        $showAll = (bool) $input->getOption('all');
+        $showAll = (bool) $input->getOption('all') || DealCategory::Pass === $selectedCategory;
 
         $allEvaluations = $this->evaluationRepository->findForSearchRequest($searchRequest);
 
@@ -118,20 +142,32 @@ class SearchResultsCommand extends Command
                     'providers' => $searchRequest->getEnabledProviders(),
                     'status' => $searchRequest->getStatus()->value,
                     'sort_mode' => $isSortByScore ? 'score' : 'category',
+                    'category_filter' => $selectedCategory?->value,
                     'cron_active' => null !== $cronTask,
                     'cron_interval_minutes' => $cronTask?->getIntervalMinutes(),
                     'cron_next_run_at' => $cronTask?->getNextRunAt()->format(\DateTimeInterface::ATOM),
                 ],
-                'must_buy' => array_map($this->normalizeEvaluation(...), $mustBuy),
-                'good' => array_map($this->normalizeEvaluation(...), $good),
+                'must_buy' => null === $selectedCategory || DealCategory::MustBuy === $selectedCategory
+                    ? array_map($this->normalizeEvaluation(...), $mustBuy)
+                    : [],
+                'good' => null === $selectedCategory || DealCategory::Good === $selectedCategory
+                    ? array_map($this->normalizeEvaluation(...), $good)
+                    : [],
             ];
 
             if ($showAll) {
-                $payload['pass'] = array_map($this->normalizeEvaluation(...), $pass);
+                $payload['pass'] = null === $selectedCategory || DealCategory::Pass === $selectedCategory
+                    ? array_map($this->normalizeEvaluation(...), $pass)
+                    : [];
             }
 
             if ($isSortByScore) {
-                $flatList = $showAll ? $allEvaluations : array_merge($mustBuy, $good);
+                $flatList = match ($selectedCategory) {
+                    DealCategory::MustBuy => $mustBuy,
+                    DealCategory::Good => $good,
+                    DealCategory::Pass => $pass,
+                    null => $showAll ? $allEvaluations : array_merge($mustBuy, $good),
+                };
                 $payload['results_by_score'] = array_map($this->normalizeEvaluation(...), $flatList);
             }
 
@@ -148,6 +184,7 @@ class SearchResultsCommand extends Command
             ['Target Price' => sprintf('%.2f EUR', $searchRequest->getTargetPrice())],
             ['Status' => strtoupper($searchRequest->getStatus()->value)],
             ['Sort Mode' => $isSortByScore ? 'BY SCORE (High -> Low)' : 'BY CATEGORY (MUST BUY / GOOD / PASS)'],
+            ['Category Filter' => null !== $selectedCategory ? $selectedCategory->label() : 'ALL CATEGORIES'],
             ['Recurring Cron Task' => $cronSummary],
             ['Sub-Topics Searched' => implode(', ', $searchRequest->getGeneratedSubTopics())],
             ['Providers' => implode(', ', $searchRequest->getEnabledProviders())],
@@ -155,6 +192,7 @@ class SearchResultsCommand extends Command
             ['Total Evaluated Ads' => (string) count($allEvaluations)],
             ['MUST BUY Count (90-100 / 9-10)' => (string) count($mustBuy)],
             ['GOOD Count (70-89 / 7-8)' => (string) count($good)],
+            ['PASS Count (< 70 / < 7)' => (string) count($pass)],
         );
 
         if ([] === $allEvaluations) {
@@ -162,6 +200,25 @@ class SearchResultsCommand extends Command
                 'No evaluated listings are stored yet for this search request.',
                 'Ensure the Messenger worker has processed the queue: php bin/console messenger:consume async --time-limit=60',
             ]);
+
+            return Command::SUCCESS;
+        }
+
+        if (null !== $selectedCategory) {
+            [$sectionTitle, $filteredEvaluations] = match ($selectedCategory) {
+                DealCategory::MustBuy => ['MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $mustBuy],
+                DealCategory::Good => ['GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $good],
+                DealCategory::Pass => ['PASS / OTHER ADS (Score < 70 / 100 | < 7.0 / 10)', $pass],
+            };
+
+            $this->renderCategorySection($io, $sectionTitle, $filteredEvaluations, $isSortByScore);
+
+            $io->success(sprintf(
+                'Displayed %d listing(s) in category "%s" out of %d total evaluated ads.',
+                count($filteredEvaluations),
+                $selectedCategory->label(),
+                count($allEvaluations),
+            ));
 
             return Command::SUCCESS;
         }
@@ -189,6 +246,19 @@ class SearchResultsCommand extends Command
         ));
 
         return Command::SUCCESS;
+    }
+
+    private function parseCategoryFilter(string $value): ?DealCategory
+    {
+        $normalized = strtolower(trim($value));
+        $normalized = str_replace(['-', ' '], '_', $normalized);
+
+        return match ($normalized) {
+            'must_buy', 'mustbuy', 'must' => DealCategory::MustBuy,
+            'good', 'good_deals', 'good_deal' => DealCategory::Good,
+            'pass', 'bad', 'other' => DealCategory::Pass,
+            default => null,
+        };
     }
 
     /**

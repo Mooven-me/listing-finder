@@ -1,0 +1,1147 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}
+    {% if active_search %}
+        {{ active_search.topic }} (#{{ active_search.id }}) — Listing Finder Dashboard
+    {% else %}
+        Listing Finder — AI Deal Intelligence Dashboard
+    {% endif %}
+{% endblock %}
+
+{% block body %}
+<div class="min-h-screen flex flex-col lg:flex-row bg-slate-950 text-slate-100">
+    {# ==================== LEFT SIDEBAR ==================== #}
+    <aside class="w-full lg:w-80 xl:w-88 shrink-0 bg-slate-900/95 border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col lg:h-screen lg:sticky lg:top-0">
+        {# Brand Header #}
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+            <a href="{{ path('app_dashboard') }}" class="flex items-center gap-3 group">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-xl shadow-lg shadow-indigo-500/20">
+                    📡
+                </div>
+                <div>
+                    <h1 class="text-base font-extrabold tracking-tight text-white group-hover:text-indigo-400 transition-colors">
+                        Listing Finder
+                    </h1>
+                    <p class="text-[11px] font-mono text-slate-400">
+                        AI Deal Radar • {{ global_stats.ai_model }}
+                    </p>
+                </div>
+            </a>
+            <button
+                type="button"
+                onclick="document.getElementById('newSearchModal').classList.remove('hidden')"
+                class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20 transition-all"
+            >
+                <span>＋ New Search</span>
+            </button>
+        </div>
+
+        {# Global Server Pulse Summary #}
+        <div class="p-4 border-b border-slate-800 bg-slate-950/50 grid grid-cols-3 gap-2 text-center">
+            <div class="p-2 rounded-xl bg-slate-900 border border-slate-800/80">
+                <div class="text-[10px] font-mono uppercase text-slate-400">Total Ads</div>
+                <div class="text-sm font-extrabold font-mono text-white">{{ global_stats.total_listings }}</div>
+            </div>
+            <div class="p-2 rounded-xl bg-slate-900 border border-slate-800/80">
+                <div class="text-[10px] font-mono uppercase text-slate-400">Evaluated</div>
+                <div class="text-sm font-extrabold font-mono text-cyan-400" id="globalEvaluatedCount">{{ global_stats.total_evaluated }}</div>
+            </div>
+            <div class="p-2 rounded-xl bg-slate-900 border border-slate-800/80">
+                <div class="text-[10px] font-mono uppercase text-slate-400">Queue</div>
+                <div class="text-sm font-extrabold font-mono {{ global_stats.queued_messages > 0 ? 'text-amber-400' : 'text-emerald-400' }}" id="globalQueueCount">
+                    {{ global_stats.queued_messages }}
+                </div>
+            </div>
+        </div>
+
+        {# Saved Searches List #}
+        <div class="p-3 flex-1 overflow-y-auto space-y-2">
+            <div class="px-2 py-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <span>Saved Searches ({{ searches_summaries|length }})</span>
+                <span class="font-mono text-[11px] text-emerald-400">{{ global_stats.active_crons }} Cron Active</span>
+            </div>
+
+            {% for item in searches_summaries %}
+                {% set s = item.entity %}
+                {% set isCurrent = active_search and active_search.id == s.id %}
+                <a
+                    href="{{ path('app_dashboard', {'search': s.id, 'sort': filter.sort, 'view': filter.view}) }}"
+                    class="block p-3.5 rounded-xl border transition-all {{ isCurrent
+                        ? 'bg-indigo-950/60 border-indigo-500/70 shadow-md shadow-indigo-950/50'
+                        : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900' }}"
+                >
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="font-bold text-sm text-white line-clamp-1">
+                            #{{ s.id }} — {{ s.topic }}
+                        </div>
+                        <span class="shrink-0 font-mono text-xs font-bold text-emerald-400">
+                            {{ s.targetPrice|number_format(0) }}€
+                        </span>
+                    </div>
+
+                    <div class="mt-2 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                        <span>{{ item.evaluated_ads }}/{{ item.total_ads }} ads</span>
+                        <div class="flex items-center gap-1.5">
+                            {% if item.must_buy_count > 0 %}
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                                    🔥 {{ item.must_buy_count }}
+                                </span>
+                            {% endif %}
+                            {% if item.good_count > 0 %}
+                                <span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold">
+                                    ✨ {{ item.good_count }}
+                                </span>
+                            {% endif %}
+                            {% if s.cronTask %}
+                                <span class="w-2 h-2 rounded-full bg-emerald-400" title="30m Cron Active"></span>
+                            {% else %}
+                                <span class="w-2 h-2 rounded-full bg-slate-600" title="Cron Disabled"></span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {# Mini Progress Bar #}
+                    <div class="mt-2 w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                            class="h-full {{ item.progress_percent >= 100 ? 'bg-emerald-500' : 'bg-indigo-500 animate-pulse' }}"
+                            style="width: {{ item.progress_percent }}%"
+                        ></div>
+                    </div>
+                </a>
+            {% else %}
+                <div class="p-6 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                    No search requests yet. Click <strong>"+ New Search"</strong> above to launch your first AI radar.
+                </div>
+            {% endfor %}
+        </div>
+
+        {# Sidebar Footer #}
+        <div class="p-4 border-t border-slate-800 bg-slate-950/60 text-[11px] font-mono text-slate-400 flex items-center justify-between">
+            <span>AI Provider: <strong class="text-slate-200">{{ global_stats.ai_provider|upper }}</strong></span>
+            <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">● Online</span>
+        </div>
+    </aside>
+
+    {# ==================== MAIN DASHBOARD CONTENT ==================== #}
+    <main class="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 space-y-6">
+        {# Flash Messages #}
+        {% for label, messages in app.flashes %}
+            {% for message in messages %}
+                {% set alertStyle = label == 'error'
+                    ? 'bg-rose-950/80 border-rose-500/60 text-rose-200'
+                    : (label == 'success' ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200' : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-200')
+                %}
+                <div class="p-4 rounded-xl border {{ alertStyle }} flex items-center justify-between text-sm shadow-lg">
+                    <span>{{ message }}</span>
+                    <button type="button" onclick="this.parentElement.remove()" class="text-xs opacity-70 hover:opacity-100 font-mono">✕</button>
+                </div>
+            {% endfor %}
+        {% endfor %}
+
+        {% if active_search and analytics %}
+            {# ==================== 1. SEARCH HEADER & CRON CONTROL BAR ==================== #}
+            <section class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl">
+                <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                    <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2.5">
+                            <span class="px-2.5 py-1 rounded-lg font-mono text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                SEARCH #{{ active_search.id }}
+                            </span>
+                            <span
+                                id="searchStatusBadge"
+                                class="px-2.5 py-1 rounded-lg font-mono text-xs font-bold border {{ active_search.status.value == 'completed'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse' }}"
+                            >
+                                ● {{ active_search.status.value|upper }}
+                            </span>
+                            <span class="text-xs font-mono text-slate-400">
+                                Created {{ active_search.createdAt|date('Y-m-d H:i') }}
+                            </span>
+                            {% if active_search.enableImages %}
+                                <span class="px-2 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/30 text-xs font-mono">
+                                    🖼️ Vision AI Enabled
+                                </span>
+                            {% endif %}
+                        </div>
+
+                        <h2 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+                            {{ active_search.topic }}
+                        </h2>
+
+                        {% if active_search.userRequirements %}
+                            <p class="text-sm text-slate-300">
+                                <span class="text-slate-500 font-semibold">Buyer Requirements:</span> {{ active_search.userRequirements }}
+                            </p>
+                        {% endif %}
+                    </div>
+
+                    {# Action Buttons (Refresh Now, Toggle Cron, Delete) #}
+                    <div class="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <form method="post" action="{{ path('app_dashboard_search_refresh', {'id': active_search.id}) }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button
+                                type="submit"
+                                class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-slate-950 transition-colors shadow-sm"
+                            >
+                                <span>↻ Fetch New Ads Now</span>
+                            </button>
+                        </form>
+
+                        <form method="post" action="{{ path('app_dashboard_search_cron_toggle', {'id': active_search.id}) }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            {% if active_search.cronTask %}
+                                <button
+                                    type="submit"
+                                    class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors"
+                                >
+                                    <span>⏸ Pause {{ active_search.cronTask.intervalMinutes }}m Cron</span>
+                                </button>
+                            {% else %}
+                                <button
+                                    type="submit"
+                                    class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition-colors"
+                                >
+                                    <span>▶ Enable 30m Cron</span>
+                                </button>
+                            {% endif %}
+                        </form>
+
+                        <form
+                            method="post"
+                            action="{{ path('app_dashboard_search_delete', {'id': active_search.id}) }}"
+                            onsubmit="return confirm('Delete Search #{{ active_search.id }} and all its listings?');"
+                        >
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button
+                                type="submit"
+                                class="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 transition-colors"
+                            >
+                                <span>🗑 Delete</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                {# AI Sub-Topics Pills & Cron Schedule Info #}
+                <div class="mt-4 pt-4 border-t border-slate-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="text-xs font-mono uppercase text-slate-400 mr-1">AI Sub-Topics:</span>
+                        <a
+                            href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'view': filter.view}) }}"
+                            class="px-2.5 py-1 rounded-lg text-xs font-mono transition-colors {{ filter.subTopic is null ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700' }}"
+                        >
+                            All ({{ active_search.generatedSubTopics|length }})
+                        </a>
+                        {% for tag in active_search.generatedSubTopics %}
+                            {% set isActiveTag = filter.subTopic == tag %}
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'subTopic': isActiveTag ? null : tag, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'view': filter.view}) }}"
+                                class="px-2.5 py-1 rounded-lg text-xs font-mono transition-colors {{ isActiveTag
+                                    ? 'bg-indigo-500 text-white font-bold ring-2 ring-indigo-400'
+                                    : 'bg-slate-950 text-slate-300 border border-slate-800 hover:border-indigo-500/50' }}"
+                            >
+                                {{ tag }}
+                            </a>
+                        {% endfor %}
+                    </div>
+
+                    <div class="text-xs font-mono text-slate-400 shrink-0">
+                        {% if active_search.cronTask %}
+                            <span class="text-emerald-400 font-semibold">● Cron Active</span>
+                            (Every {{ active_search.cronTask.intervalMinutes }}m | Runs: {{ active_search.cronTask.runCount }} | Next: {{ active_search.cronTask.nextRunAt|date('H:i:s') }})
+                        {% else %}
+                            <span class="text-slate-500">○ Recurring Cron Disabled</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {# Live Evaluation Progress Bar #}
+                <div class="mt-4 pt-3 border-t border-slate-800/60">
+                    <div class="flex items-center justify-between text-xs font-mono mb-1.5">
+                        <span class="text-slate-300">
+                            AI Evaluation Progress (<span id="liveEvaluatedAds">{{ analytics.total_evaluated_ads }}</span> / <span id="liveTotalAds">{{ analytics.total_stored_ads }}</span> listings evaluated by Ollama)
+                        </span>
+                        <span class="font-bold text-indigo-400" id="liveProgressPercent">{{ analytics.progress_percent }}%</span>
+                    </div>
+                    <div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                        <div
+                            id="liveProgressBar"
+                            class="h-full bg-gradient-to-r from-indigo-500 via-cyan-500 to-emerald-500 transition-all duration-500"
+                            style="width: {{ analytics.progress_percent }}%"
+                        ></div>
+                    </div>
+                </div>
+            </section>
+
+            {# ==================== 2. KPI SUMMARY CARDS ==================== #}
+            <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+                {# Target Price Card #}
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 flex flex-col justify-between">
+                    <div class="flex items-center justify-between text-xs font-mono uppercase text-slate-400">
+                        <span>Target Budget</span>
+                        <span class="text-lg">🎯</span>
+                    </div>
+                    <div class="mt-2">
+                        <div class="text-2xl font-extrabold font-mono text-white">
+                            {{ active_search.targetPrice|number_format(2) }} EUR
+                        </div>
+                        <div class="mt-1 text-xs text-slate-400 font-mono">
+                            Avg Ad: {{ analytics.avg_price|number_format(2) }}€ | Min: {{ analytics.min_price|number_format(2) }}€
+                        </div>
+                    </div>
+                </div>
+
+                {# MUST BUY Card #}
+                <a
+                    href="{{ path('app_dashboard', {'search': active_search.id, 'category': filter.category == 'must_buy' ? null : 'must_buy', 'sort': filter.sort, 'view': filter.view}) }}"
+                    class="rounded-2xl border {{ filter.category == 'must_buy' ? 'border-emerald-400 ring-2 ring-emerald-500/40' : 'border-emerald-500/30 hover:border-emerald-500/60' }} bg-emerald-950/20 p-4 flex flex-col justify-between transition-all"
+                >
+                    <div class="flex items-center justify-between text-xs font-mono uppercase text-emerald-300">
+                        <span>MUST BUY (90-100)</span>
+                        <span class="text-lg">🔥</span>
+                    </div>
+                    <div class="mt-2">
+                        <div class="text-3xl font-extrabold font-mono text-emerald-400" id="liveMustBuyCount">
+                            {{ analytics.must_buy_count }}
+                        </div>
+                        <div class="mt-1 text-xs text-emerald-300/80 font-mono">
+                            Score 9.0–10/10 • Click to filter
+                        </div>
+                    </div>
+                </a>
+
+                {# GOOD DEALS Card #}
+                <a
+                    href="{{ path('app_dashboard', {'search': active_search.id, 'category': filter.category == 'good' ? null : 'good', 'sort': filter.sort, 'view': filter.view}) }}"
+                    class="rounded-2xl border {{ filter.category == 'good' ? 'border-cyan-400 ring-2 ring-cyan-500/40' : 'border-cyan-500/30 hover:border-cyan-500/60' }} bg-cyan-950/20 p-4 flex flex-col justify-between transition-all"
+                >
+                    <div class="flex items-center justify-between text-xs font-mono uppercase text-cyan-300">
+                        <span>GOOD DEALS (70-89)</span>
+                        <span class="text-lg">✨</span>
+                    </div>
+                    <div class="mt-2">
+                        <div class="text-3xl font-extrabold font-mono text-cyan-400" id="liveGoodCount">
+                            {{ analytics.good_count }}
+                        </div>
+                        <div class="mt-1 text-xs text-cyan-300/80 font-mono">
+                            Score 7.0–8.9/10 • Click to filter
+                        </div>
+                    </div>
+                </a>
+
+                {# Average Score & Sub-Scores Card #}
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 flex flex-col justify-between">
+                    <div class="flex items-center justify-between text-xs font-mono uppercase text-slate-400">
+                        <span>Avg AI Score</span>
+                        <span class="text-lg">📊</span>
+                    </div>
+                    <div class="mt-2">
+                        <div class="text-2xl font-extrabold font-mono text-indigo-400">
+                            {{ analytics.avg_score }}/100
+                            <span class="text-xs font-normal text-slate-400">({{ analytics.working_count }} functional)</span>
+                        </div>
+                        <div class="mt-1 text-[11px] text-slate-400 font-mono">
+                            P:{{ analytics.sub_score_averages.price }} W:{{ analytics.sub_score_averages.working }} A:{{ analytics.sub_score_averages.age }} R:{{ analytics.sub_score_averages.relevance }}
+                        </div>
+                    </div>
+                </div>
+
+                {# Best Deal Spotlight Card #}
+                <div class="rounded-2xl border border-indigo-500/30 bg-indigo-950/20 p-4 flex flex-col justify-between">
+                    <div class="flex items-center justify-between text-xs font-mono uppercase text-indigo-300">
+                        <span>Top Deal Found</span>
+                        <span class="text-lg">🏆</span>
+                    </div>
+                    {% if analytics.best_deal %}
+                        <div class="mt-1">
+                            <a href="{{ analytics.best_deal.listing.url }}" target="_blank" class="text-xs font-bold text-white hover:text-indigo-300 line-clamp-1">
+                                {{ analytics.best_deal.listing.title }}
+                            </a>
+                            <div class="mt-1 flex items-baseline gap-2">
+                                <span class="text-xl font-extrabold font-mono text-emerald-400">
+                                    {{ analytics.best_deal.listing.price|number_format(2) }}€
+                                </span>
+                                <span class="text-xs font-mono font-bold text-indigo-300">
+                                    {{ analytics.best_deal.scoreOutOf100 }}/100
+                                </span>
+                            </div>
+                        </div>
+                    {% else %}
+                        <div class="text-xs text-slate-500 font-mono mt-2">Waiting for evaluations...</div>
+                    {% endif %}
+                </div>
+            </section>
+
+            {# ==================== 3. ANALYTICS CHARTS SECTION ==================== #}
+            <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {# Chart 1: Deal Category Breakdown #}
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
+                            Deal Category Distribution
+                        </h3>
+                        <span class="text-xs font-mono text-slate-500">{{ analytics.total_evaluated_ads }} evaluated</span>
+                    </div>
+                    <div class="relative h-56 flex items-center justify-center">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+
+                {# Chart 2: Provider Performance & Breakdown #}
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
+                            Marketplace Provider Breakdown
+                        </h3>
+                        <span class="text-xs font-mono text-slate-500">Stored vs Good+ Deals</span>
+                    </div>
+                    <div class="relative h-56">
+                        <canvas id="providerChart"></canvas>
+                    </div>
+                </div>
+
+                {# Chart 3: Score vs Price Scatter Plot #}
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
+                            Score vs. Price Sweet-Spot
+                        </h3>
+                        <span class="text-xs font-mono text-emerald-400">Top-Left = Best Bargains</span>
+                    </div>
+                    <div class="relative h-56">
+                        <canvas id="scatterChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            {# Sub-Topic Performance Breakdown Table #}
+            <details class="rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden group">
+                <summary class="px-5 py-3.5 cursor-pointer flex items-center justify-between text-xs font-mono font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-900">
+                    <span>🔎 AI Sub-Topic & Provider Telemetry Matrix (Click to expand)</span>
+                    <span class="text-indigo-400 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <div class="p-5 border-t border-slate-800 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    {# Sub-Topic Table #}
+                    <div>
+                        <h4 class="text-xs font-mono uppercase text-slate-400 mb-2">AI Sub-Topic Tag Yield</h4>
+                        <div class="overflow-x-auto rounded-xl border border-slate-800">
+                            <table class="w-full text-left text-xs font-mono">
+                                <thead class="bg-slate-950 text-slate-400 uppercase">
+                                    <tr>
+                                        <th class="py-2.5 px-3">Sub-Topic Tag</th>
+                                        <th class="py-2.5 px-3">Ads</th>
+                                        <th class="py-2.5 px-3">🔥 Must</th>
+                                        <th class="py-2.5 px-3">✨ Good</th>
+                                        <th class="py-2.5 px-3">Avg / Max Score</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800/70">
+                                    {% for st in analytics.sub_topic_stats %}
+                                        <tr class="hover:bg-slate-800/40">
+                                            <td class="py-2 px-3 font-bold text-indigo-300">
+                                                <a href="{{ path('app_dashboard', {'search': active_search.id, 'subTopic': st.tag, 'sort': filter.sort}) }}" class="hover:underline">
+                                                    {{ st.tag }}
+                                                </a>
+                                            </td>
+                                            <td class="py-2 px-3">{{ st.stored_count }}</td>
+                                            <td class="py-2 px-3 text-emerald-400 font-bold">{{ st.must_buy_count }}</td>
+                                            <td class="py-2 px-3 text-cyan-400 font-bold">{{ st.good_count }}</td>
+                                            <td class="py-2 px-3">{{ st.avg_score }} / <span class="text-white font-bold">{{ st.max_score }}</span></td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {# Provider Telemetry Table #}
+                    <div>
+                        <h4 class="text-xs font-mono uppercase text-slate-400 mb-2">Provider Telemetry</h4>
+                        <div class="overflow-x-auto rounded-xl border border-slate-800">
+                            <table class="w-full text-left text-xs font-mono">
+                                <thead class="bg-slate-950 text-slate-400 uppercase">
+                                    <tr>
+                                        <th class="py-2.5 px-3">Provider</th>
+                                        <th class="py-2.5 px-3">Stored</th>
+                                        <th class="py-2.5 px-3">Evaluated</th>
+                                        <th class="py-2.5 px-3">🔥 Must / ✨ Good</th>
+                                        <th class="py-2.5 px-3">Avg Score</th>
+                                        <th class="py-2.5 px-3">Avg Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800/70">
+                                    {% for p in analytics.provider_stats %}
+                                        <tr class="hover:bg-slate-800/40">
+                                            <td class="py-2 px-3 font-bold text-white">{{ p.name }}</td>
+                                            <td class="py-2 px-3">{{ p.stored_count }}</td>
+                                            <td class="py-2 px-3">{{ p.evaluated_count }}</td>
+                                            <td class="py-2 px-3">
+                                                <span class="text-emerald-400 font-bold">{{ p.must_buy_count }}</span> /
+                                                <span class="text-cyan-400 font-bold">{{ p.good_count }}</span>
+                                            </td>
+                                            <td class="py-2 px-3">{{ p.avg_score }}/100</td>
+                                            <td class="py-2 px-3 text-emerald-300">{{ p.avg_price|number_format(2) }} EUR</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            {# ==================== 4. INTERACTIVE FILTER & SORT TOOLBAR ==================== #}
+            <section class="rounded-2xl border border-slate-800 bg-slate-900/95 p-4 shadow-lg sticky top-2 z-20 backdrop-blur">
+                <form method="get" action="{{ path('app_dashboard') }}" class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+                    <input type="hidden" name="search" value="{{ active_search.id }}">
+                    {% if filter.subTopic %}
+                        <input type="hidden" name="subTopic" value="{{ filter.subTopic }}">
+                    {% endif %}
+
+                    {# Left Controls: Sort Mode + Category Filter + Provider Filter #}
+                    <div class="flex flex-wrap items-center gap-2">
+                        {# Sort Mode Toggle (By Category vs By Score) #}
+                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': 'category', 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
+                                class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors {{ not filter.isSortByScore ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white' }}"
+                            >
+                                📂 By Category
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': 'score', 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
+                                class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors {{ filter.isSortByScore ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white' }}"
+                            >
+                                🏆 By Score (100→0)
+                            </a>
+                        </div>
+
+                        {# Single Category Filter Pills #}
+                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': null, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
+                                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors {{ filter.resolvedCategory is null ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
+                            >
+                                All Deals
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': 'must_buy', 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'view': filter.view}) }}"
+                                class="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors {{ filter.resolvedCategory and filter.resolvedCategory.value == 'must_buy' ? 'bg-emerald-500 text-slate-950' : 'text-emerald-400 hover:bg-emerald-950/60' }}"
+                            >
+                                🔥 Must Buy ({{ analytics.must_buy_count }})
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': 'good', 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'view': filter.view}) }}"
+                                class="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors {{ filter.resolvedCategory and filter.resolvedCategory.value == 'good' ? 'bg-cyan-500 text-slate-950' : 'text-cyan-400 hover:bg-cyan-950/60' }}"
+                            >
+                                ✨ Good ({{ analytics.good_count }})
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': 'pass', 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'view': filter.view}) }}"
+                                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors {{ filter.resolvedCategory and filter.resolvedCategory.value == 'pass' ? 'bg-amber-500 text-slate-950' : 'text-amber-400 hover:bg-amber-950/60' }}"
+                            >
+                                Pass ({{ analytics.pass_count }})
+                            </a>
+                        </div>
+
+                        {# Provider Filter Pills #}
+                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': null, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
+                                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold {{ filter.normalizedProvider is null ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
+                            >
+                                All Sites
+                            </a>
+                            {% for pName in ['leboncoin', 'vinted'] %}
+                                <a
+                                    href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': pName, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
+                                    class="px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase {{ filter.normalizedProvider == pName ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white' }}"
+                                >
+                                    {{ pName }}
+                                </a>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    {# Right Controls: Search Input, Max Price, Working Only, Layout Switch #}
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input type="hidden" name="sort" value="{{ filter.sort }}">
+                        {% if filter.category %}
+                            <input type="hidden" name="category" value="{{ filter.category }}">
+                        {% endif %}
+                        {% if filter.provider %}
+                            <input type="hidden" name="provider" value="{{ filter.provider }}">
+                        {% endif %}
+                        <input type="hidden" name="view" value="{{ filter.view }}">
+
+                        <input
+                            type="text"
+                            name="q"
+                            value="{{ filter.q }}"
+                            placeholder="Filter title or AI analysis..."
+                            class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-44 sm:w-52"
+                        >
+
+                        <input
+                            type="number"
+                            name="maxPrice"
+                            step="1"
+                            min="1"
+                            value="{{ filter.maxPrice }}"
+                            placeholder="Max EUR"
+                            class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-24"
+                        >
+
+                        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 cursor-pointer">
+                            <input type="checkbox" name="onlyWorking" value="1" {{ filter.onlyWorking ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-slate-700 bg-slate-900 text-indigo-600">
+                            <span>Working only</span>
+                        </label>
+
+                        <button type="submit" class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors">
+                            Apply
+                        </button>
+
+                        {# Cards vs Table View Switch #}
+                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': 'cards'}) }}"
+                                class="px-2.5 py-1 rounded-lg text-xs font-semibold {{ not filter.isTableView ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
+                                title="Cards View"
+                            >
+                                ⊞ Cards
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': 'table'}) }}"
+                                class="px-2.5 py-1 rounded-lg text-xs font-semibold {{ filter.isTableView ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
+                                title="Compact Table View"
+                            >
+                                ☰ Table
+                            </a>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            {# ==================== 5. LISTINGS RESULTS DISPLAY ==================== #}
+            {% if filtered_evaluations is empty %}
+                <section class="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center space-y-3">
+                    <div class="text-4xl">🔍</div>
+                    <h3 class="text-lg font-bold text-white">No listings match the current filters</h3>
+                    <p class="text-sm text-slate-400 max-w-md mx-auto">
+                        Try clearing a filter pill above or wait a few seconds if the background worker is still evaluating ads with Ollama.
+                    </p>
+                    <div>
+                        <a
+                            href="{{ path('app_dashboard', {'search': active_search.id, 'showPass': 1}) }}"
+                            class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white"
+                        >
+                            Reset Filters & Show All Ads
+                        </a>
+                    </div>
+                </section>
+            {% elseif filter.isTableView %}
+                {# ---------- COMPACT TABLE VIEW ---------- #}
+                <section class="rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-xl">
+                    <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+                        <h3 class="text-sm font-bold text-white">
+                            Showing {{ filtered_evaluations|length }} Evaluated Listings
+                        </h3>
+                        <span class="text-xs font-mono text-slate-400">Sorted by Score DESC, Price ASC</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
+                                <tr>
+                                    <th class="py-3 px-4">#</th>
+                                    <th class="py-3 px-4">Score</th>
+                                    <th class="py-3 px-4">Category</th>
+                                    <th class="py-3 px-4">Provider</th>
+                                    <th class="py-3 px-4">Title & AI Appraisal</th>
+                                    <th class="py-3 px-4">Price</th>
+                                    <th class="py-3 px-4">State / Age</th>
+                                    <th class="py-3 px-4">Sub-Scores</th>
+                                    <th class="py-3 px-4 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/80">
+                                {% for eval in filtered_evaluations %}
+                                    {% set l = eval.listing %}
+                                    {% set cat = eval.category.value %}
+                                    <tr class="hover:bg-slate-800/40 transition-colors align-top">
+                                        <td class="py-3.5 px-4 font-mono text-slate-500">#{{ loop.index }}</td>
+                                        <td class="py-3.5 px-4 font-mono font-extrabold text-sm {{ cat == 'must_buy' ? 'text-emerald-400' : (cat == 'good' ? 'text-cyan-400' : 'text-amber-400') }}">
+                                            {{ eval.scoreOutOf100 }}/100
+                                            <div class="text-[10px] font-normal text-slate-500">{{ eval.scoreOutOf10|number_format(1) }}/10</div>
+                                        </td>
+                                        <td class="py-3.5 px-4">
+                                            <span class="px-2 py-0.5 rounded-full text-[11px] font-bold {{ cat == 'must_buy' ? 'bg-emerald-500/20 text-emerald-300' : (cat == 'good' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-amber-500/20 text-amber-300') }}">
+                                                {{ eval.category.label }}
+                                            </span>
+                                        </td>
+                                        <td class="py-3.5 px-4 font-mono font-bold uppercase text-slate-200">
+                                            {{ l.provider }}
+                                            <div class="text-[10px] text-indigo-400 font-normal">{{ l.searchTopicUsed }}</div>
+                                        </td>
+                                        <td class="py-3.5 px-4 max-w-xl">
+                                            <a href="{{ l.url }}" target="_blank" class="font-bold text-white hover:text-indigo-400 text-sm block mb-1">
+                                                {{ l.title }}
+                                            </a>
+                                            <div class="p-2.5 rounded-lg bg-indigo-950/40 border-l-2 border-indigo-500 text-slate-300 text-xs leading-relaxed">
+                                                <strong class="text-indigo-300 font-mono text-[10px] uppercase">AI Analysis:</strong>
+                                                {{ eval.aiReasoning }}
+                                            </div>
+                                        </td>
+                                        <td class="py-3.5 px-4 font-mono font-extrabold text-base text-emerald-400 whitespace-nowrap">
+                                            {{ l.price|number_format(2) }} {{ l.currency }}
+                                        </td>
+                                        <td class="py-3.5 px-4 text-slate-300">
+                                            <div>{{ l.conditionState ?? 'Unspecified' }}</div>
+                                            <div class="text-[11px] text-slate-500">{{ eval.estimatedAge ?? 'N/A' }}</div>
+                                        </td>
+                                        <td class="py-3.5 px-4 font-mono text-[11px] text-slate-300 whitespace-nowrap">
+                                            <div>P:{{ eval.priceScore }} W:{{ eval.workingConditionScore }}</div>
+                                            <div>A:{{ eval.productAgeScore }} R:{{ eval.relevanceScore }}</div>
+                                        </td>
+                                        <td class="py-3.5 px-4 text-right whitespace-nowrap">
+                                            <a href="{{ l.url }}" target="_blank" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold">
+                                                Open ↗
+                                            </a>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            {% elseif filter.isSortByScore or filter.resolvedCategory is not null %}
+                {# ---------- UNIFIED SCORE-RANKED CARDS VIEW (OR SINGLE CATEGORY) ---------- #}
+                <section class="space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center gap-2.5">
+                            <h3 class="text-lg font-extrabold text-white">
+                                {% if filter.resolvedCategory %}
+                                    {{ filter.resolvedCategory.label }} — Filtered Listings
+                                {% else %}
+                                    🏆 All Deals Ranked by AI Score (High → Low)
+                                {% endif %}
+                            </h3>
+                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-indigo-500/20 text-indigo-300">
+                                {{ filtered_evaluations|length }} results
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        {% for eval in filtered_evaluations %}
+                            {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
+                        {% endfor %}
+                    </div>
+                </section>
+            {% else %}
+                {# ---------- GROUPED BY CATEGORY CARDS VIEW ---------- #}
+                {# 1. MUST BUY SECTION #}
+                <section class="space-y-4">
+                    <div class="flex items-center justify-between border-b border-emerald-500/30 pb-3">
+                        <div class="flex items-center gap-2.5">
+                            <span class="text-xl">🔥</span>
+                            <h3 class="text-lg font-extrabold text-emerald-400 tracking-tight">
+                                MUST BUY DEALS (Score 90–100 / 100 | 9.0–10.0 / 10)
+                            </h3>
+                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                {{ grouped_evaluations.must_buy|length }}
+                            </span>
+                        </div>
+                        <a
+                            href="{{ path('app_dashboard', {'search': active_search.id, 'category': 'must_buy'}) }}"
+                            class="text-xs font-mono text-emerald-400 hover:underline"
+                        >
+                            Show only MUST BUY →
+                        </a>
+                    </div>
+
+                    {% if grouped_evaluations.must_buy is not empty %}
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            {% for eval in grouped_evaluations.must_buy %}
+                                {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="rounded-xl border border-slate-800/80 bg-slate-900/40 p-6 text-center text-xs font-mono text-slate-400">
+                            No listings in the 90–100 score bracket for the current filters.
+                        </div>
+                    {% endif %}
+                </section>
+
+                {# 2. GOOD DEALS SECTION #}
+                <section class="space-y-4 pt-4">
+                    <div class="flex items-center justify-between border-b border-cyan-500/30 pb-3">
+                        <div class="flex items-center gap-2.5">
+                            <span class="text-xl">✨</span>
+                            <h3 class="text-lg font-extrabold text-cyan-400 tracking-tight">
+                                GOOD DEALS (Score 70–89 / 100 | 7.0–8.9 / 10)
+                            </h3>
+                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                {{ grouped_evaluations.good|length }}
+                            </span>
+                        </div>
+                        <a
+                            href="{{ path('app_dashboard', {'search': active_search.id, 'category': 'good'}) }}"
+                            class="text-xs font-mono text-cyan-400 hover:underline"
+                        >
+                            Show only GOOD →
+                        </a>
+                    </div>
+
+                    {% if grouped_evaluations.good is not empty %}
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            {% for eval in grouped_evaluations.good %}
+                                {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="rounded-xl border border-slate-800/80 bg-slate-900/40 p-6 text-center text-xs font-mono text-slate-400">
+                            No listings in the 70–89 score bracket for the current filters.
+                        </div>
+                    {% endif %}
+                </section>
+
+                {# 3. PASS / OTHER ADS SECTION #}
+                {% if filter.showPass and grouped_evaluations.pass is not empty %}
+                    <section class="space-y-4 pt-4">
+                        <div class="flex items-center justify-between border-b border-amber-500/30 pb-3">
+                            <div class="flex items-center gap-2.5">
+                                <span class="text-xl">⏭️</span>
+                                <h3 class="text-lg font-extrabold text-amber-400 tracking-tight">
+                                    PASS / OTHER ADS (Score &lt; 70 / 100)
+                                </h3>
+                                <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-500/20 text-amber-300">
+                                    {{ grouped_evaluations.pass|length }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            {% for eval in grouped_evaluations.pass %}
+                                {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
+                            {% endfor %}
+                        </div>
+                    </section>
+                {% elseif analytics.pass_count > 0 %}
+                    <div class="pt-2 text-center">
+                        <a
+                            href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'showPass': 1, 'view': filter.view}) }}"
+                            class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono text-slate-400 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700"
+                        >
+                            <span>+ Show {{ analytics.pass_count }} Lower-Scored "PASS" Listings (&lt; 70/100)</span>
+                        </a>
+                    </div>
+                {% endif %}
+            {% endif %}
+        {% else %}
+            {# Empty State when no searches exist #}
+            <section class="rounded-2xl border border-slate-800 bg-slate-900/80 p-12 text-center space-y-4">
+                <div class="text-5xl">📡</div>
+                <h2 class="text-2xl font-extrabold text-white">Welcome to Listing Finder AI Radar</h2>
+                <p class="text-sm text-slate-400 max-w-lg mx-auto">
+                    Start a new search to automatically expand your product topic into marketplace keywords with Ollama, scrape real listings from LeBonCoin & Vinted, and evaluate every deal with AI.
+                </p>
+                <button
+                    type="button"
+                    onclick="document.getElementById('newSearchModal').classList.remove('hidden')"
+                    class="px-5 py-2.5 rounded-xl font-bold text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30"
+                >
+                    ＋ Launch First AI Search
+                </button>
+            </section>
+        {% endif %}
+    </main>
+</div>
+
+{# ==================== NEW AI SEARCH MODAL ==================== #}
+<div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+            <h3 class="text-base font-extrabold text-white flex items-center gap-2">
+                <span>📡 Launch New AI Deal Search</span>
+            </h3>
+            <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+
+        <form method="post" action="{{ path('app_dashboard_search_new') }}" class="p-6 space-y-4 text-sm">
+            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_new_search') }}">
+
+            <div>
+                <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Product Topic / Specification *</label>
+                <input
+                    type="text"
+                    name="topic"
+                    required
+                    placeholder="e.g. sfp+ with at least 4 switch rj45 1Gb"
+                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                >
+                <p class="mt-1 text-[11px] text-slate-400">
+                    Ollama will expand this into 6–8 concrete brand/model and French marketplace search queries.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Target Price (EUR) *</label>
+                    <input
+                        type="number"
+                        name="target_price"
+                        step="0.5"
+                        min="1"
+                        value="50"
+                        required
+                        class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-white focus:outline-none focus:border-indigo-500"
+                    >
+                </div>
+                <div>
+                    <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Ads / Sub-Topic</label>
+                    <input
+                        type="number"
+                        name="limit"
+                        min="5"
+                        max="100"
+                        value="25"
+                        class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-white focus:outline-none focus:border-indigo-500"
+                    >
+                </div>
+                <div>
+                    <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Cron Interval (min)</label>
+                    <input
+                        type="number"
+                        name="interval"
+                        min="5"
+                        max="1440"
+                        value="30"
+                        class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-white focus:outline-none focus:border-indigo-500"
+                    >
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Additional Buyer Requirements (Optional)</label>
+                <textarea
+                    name="user_requirements"
+                    rows="2"
+                    placeholder="e.g. Low power consumption, fanless preferred, rack ears included..."
+                    class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                ></textarea>
+            </div>
+
+            <div>
+                <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Marketplace Providers</label>
+                <div class="flex flex-wrap gap-3">
+                    {% for p in ['leboncoin', 'vinted', 'backmarket'] %}
+                        <label class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono uppercase cursor-pointer">
+                            <input type="checkbox" name="providers[]" value="{{ p }}" checked class="rounded text-indigo-600">
+                            <span>{{ p }}</span>
+                        </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pt-1">
+                <label class="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                    <input type="checkbox" name="enable_images" value="1" class="rounded text-indigo-600">
+                    <span>Enable Vision AI inspection on listing photos</span>
+                </label>
+            </div>
+
+            <div class="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+                <button
+                    type="button"
+                    onclick="document.getElementById('newSearchModal').classList.add('hidden')"
+                    class="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="submit"
+                    class="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20"
+                >
+                    🚀 Expand with AI & Start Radar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block javascripts %}
+    {% if active_search and analytics %}
+    <script>
+        (function () {
+            Chart.defaults.color = '#94a3b8';
+            Chart.defaults.borderColor = 'rgba(30, 41, 59, 0.8)';
+            Chart.defaults.font.family = "'JetBrains Mono', monospace";
+
+            // 1. Category Doughnut Chart
+            const catCtx = document.getElementById('categoryChart');
+            if (catCtx) {
+                new Chart(catCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['MUST BUY (90-100)', 'GOOD (70-89)', 'PASS (<70)'],
+                        datasets: [{
+                            data: [
+                                {{ analytics.must_buy_count }},
+                                {{ analytics.good_count }},
+                                {{ analytics.pass_count }}
+                            ],
+                            backgroundColor: [
+                                'rgba(16, 185, 129, 0.85)',
+                                'rgba(6, 182, 212, 0.85)',
+                                'rgba(245, 158, 11, 0.65)'
+                            ],
+                            borderColor: '#0f172a',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '65%',
+                        plugins: {
+                            legend: { position: 'bottom', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } }
+                        }
+                    }
+                });
+            }
+
+            // 2. Provider Breakdown Chart
+            const provCtx = document.getElementById('providerChart');
+            if (provCtx) {
+                const providerStats = {{ analytics.provider_stats|json_encode|raw }};
+                new Chart(provCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: providerStats.map(p => p.name),
+                        datasets: [
+                            {
+                                label: 'Stored Ads',
+                                data: providerStats.map(p => p.stored_count),
+                                backgroundColor: 'rgba(99, 102, 241, 0.6)',
+                                borderRadius: 6
+                            },
+                            {
+                                label: 'Must Buy + Good',
+                                data: providerStats.map(p => p.must_buy_count + p.good_count),
+                                backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                                borderRadius: 6
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: { beginAtZero: true }
+                        },
+                        plugins: {
+                            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
+                        }
+                    }
+                });
+            }
+
+            // 3. Score vs Price Scatter Plot
+            const scatterCtx = document.getElementById('scatterChart');
+            if (scatterCtx) {
+                const points = {{ analytics.scatter_points|json_encode|raw }};
+                new Chart(scatterCtx, {
+                    type: 'scatter',
+                    data: {
+                        datasets: [
+                            {
+                                label: 'MUST BUY',
+                                data: points.filter(p => p.category === 'must_buy'),
+                                backgroundColor: 'rgba(16, 185, 129, 0.9)',
+                                pointRadius: 6
+                            },
+                            {
+                                label: 'GOOD',
+                                data: points.filter(p => p.category === 'good'),
+                                backgroundColor: 'rgba(6, 182, 212, 0.85)',
+                                pointRadius: 5
+                            },
+                            {
+                                label: 'PASS',
+                                data: points.filter(p => p.category === 'pass'),
+                                backgroundColor: 'rgba(245, 158, 11, 0.6)',
+                                pointRadius: 4
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                title: { display: true, text: 'Price (EUR)', font: { size: 10 } },
+                                beginAtZero: true
+                            },
+                            y: {
+                                title: { display: true, text: 'AI Score (/100)', font: { size: 10 } },
+                                min: 0,
+                                max: 100
+                            }
+                        },
+                        plugins: {
+                            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } },
+                            tooltip: {
+                                callbacks: {
+                                    label: function (ctx) {
+                                        const raw = ctx.raw;
+                                        return `[${raw.provider}] ${raw.title} — ${raw.x}€ (${raw.y}/100)`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 4. Live Status Polling while evaluations are running
+            const searchId = {{ active_search.id }};
+            let currentEvaluated = {{ analytics.total_evaluated_ads }};
+            const totalAds = {{ analytics.total_stored_ads }};
+
+            if (currentEvaluated < totalAds) {
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch(`/api/dashboard/status/${searchId}`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+
+                        const evalEl = document.getElementById('liveEvaluatedAds');
+                        const totalEl = document.getElementById('liveTotalAds');
+                        const pctEl = document.getElementById('liveProgressPercent');
+                        const barEl = document.getElementById('liveProgressBar');
+                        const mustEl = document.getElementById('liveMustBuyCount');
+                        const goodEl = document.getElementById('liveGoodCount');
+                        const queueEl = document.getElementById('globalQueueCount');
+
+                        if (evalEl) evalEl.textContent = data.evaluated_ads;
+                        if (totalEl) totalEl.textContent = data.total_ads;
+                        if (pctEl) pctEl.textContent = data.progress_percent + '%';
+                        if (barEl) barEl.style.width = data.progress_percent + '%';
+                        if (mustEl) mustEl.textContent = data.must_buy_count;
+                        if (goodEl) goodEl.textContent = data.good_count;
+                        if (queueEl) queueEl.textContent = data.queued_messages;
+
+                        if (data.evaluated_ads >= data.total_ads && data.total_ads > 0) {
+                            clearInterval(pollInterval);
+                            window.location.reload();
+                        }
+                    } catch (e) {
+                        // ignore transient network errors
+                    }
+                }, 4000);
+            }
+        })();
+    </script>
+    {% endif %}
+{% endblock %}

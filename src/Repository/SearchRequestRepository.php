@@ -39,4 +39,20 @@ class SearchRequestRepository extends ServiceEntityRepository
             ->getQuery()
             ->getOneOrNullResult();
     }
+
+    /**
+     * @return list<SearchRequest>
+     */
+    public function findAllOrderedByNewest(): array
+    {
+        /** @var list<SearchRequest> $results */
+        $results = $this->createQueryBuilder('sr')
+            ->leftJoin('sr.cronTask', 'ct')
+            ->addSelect('ct')
+            ->orderBy('sr.id', 'DESC')
+            ->getQuery()
+            ->getResult();
+
+        return $results;
+    }
 }

@@ -144,6 +144,7 @@ class SearchStartCommand extends Command
             'php bin/console messenger:consume scheduler_default async --time-limit=60 -vv',
             sprintf('View results (by category): php bin/console app:search:results %d --by-category', $searchRequestId),
             sprintf('View results (by score):    php bin/console app:search:results %d --by-score', $searchRequestId),
+            sprintf('View a single category:     php bin/console app:search:results %d must_buy  (or: good | pass)', $searchRequestId),
             sprintf('Stop/remove cron task:      php bin/console app:search:stop %d', $searchRequestId),
         ]);
 

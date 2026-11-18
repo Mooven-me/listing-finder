@@ -189,5 +189,11 @@ final class SearchPipelineTest extends KernelTestCase
         $scoreOutput = $resultsTester->getDisplay();
         self::assertStringContainsString('TOP DEALS (SCORE >= 70/100) — SORTED BY SCORE', $scoreOutput);
         self::assertStringContainsString('BY SCORE (High -> Low)', $scoreOutput);
+
+        // Results filtered by a single category argument (must_buy)
+        self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch', 'category' => 'must_buy']));
+        $onlyMustBuyOutput = $resultsTester->getDisplay();
+        self::assertStringContainsString('MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $onlyMustBuyOutput);
+        self::assertStringNotContainsString('GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $onlyMustBuyOutput);
     }
 }
