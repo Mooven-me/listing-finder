@@ -127,11 +127,11 @@ final class DashboardControllerTest extends WebTestCase
         self::assertStringContainsString('MikroTik CRS305-1G-4S+IN Parfait Etat', $mustBuyContent);
         self::assertStringNotContainsString('Netgear ProSafe GS108T Gigabit Switch', $mustBuyContent);
 
-        // 3. Sort by score + compact table view
-        $client->request('GET', sprintf('/?search=%d&sort=score&view=table', $searchId));
+        // 3. Sort by score + compact table view + pagination
+        $client->request('GET', sprintf('/?search=%d&sort=score&view=table&perPage=10&page=1', $searchId));
         self::assertResponseIsSuccessful();
         $tableContent = (string) $client->getResponse()->getContent();
-        self::assertStringContainsString('Showing 2 Evaluated Listings', $tableContent);
+        self::assertStringContainsString('1-2', $tableContent);
 
         // 4. JSON Status API endpoint
         $client->request('GET', sprintf('/api/dashboard/status/%d', $searchId));
@@ -141,7 +141,7 @@ final class DashboardControllerTest extends WebTestCase
         self::assertSame(2, $statusPayload['total_ads']);
         self::assertSame(2, $statusPayload['evaluated_ads']);
         self::assertSame(1, $statusPayload['must_buy_count']);
-        self::assertSame(1, $statusPayload['good_count']);
+        self::assertSame(1, $statusPayload['extremely_good_count']);
         self::assertSame(100, $statusPayload['progress_percent']);
     }
 }

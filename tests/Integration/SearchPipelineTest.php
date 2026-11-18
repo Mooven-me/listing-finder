@@ -179,21 +179,22 @@ final class SearchPipelineTest extends KernelTestCase
         $resultsTester = new CommandTester($resultsCommand);
         self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch']));
         $output = $resultsTester->getDisplay();
-        self::assertStringContainsString('MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $output);
-        self::assertStringContainsString('GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $output);
+        self::assertStringContainsString('MUST BUY (Score 90-100)', $output);
+        self::assertStringContainsString('EXTREMELY GOOD (Score 70-89)', $output);
+        self::assertStringContainsString('GOOD (Score 50-69)', $output);
         self::assertStringContainsString('DISABLED (Removed from cron_task table)', $output);
         self::assertStringContainsString('[AI ANALYSIS]', $output);
 
         // Results sorted by score (--by-score)
         self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch', '--by-score' => true]));
         $scoreOutput = $resultsTester->getDisplay();
-        self::assertStringContainsString('TOP DEALS (SCORE >= 70/100) — SORTED BY SCORE', $scoreOutput);
+        self::assertStringContainsString('RECOMMENDED DEALS (SCORE >= 50/100) — SORTED BY SCORE', $scoreOutput);
         self::assertStringContainsString('BY SCORE (High -> Low)', $scoreOutput);
 
         // Results filtered by a single category argument (must_buy)
         self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch', 'category' => 'must_buy']));
         $onlyMustBuyOutput = $resultsTester->getDisplay();
-        self::assertStringContainsString('MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $onlyMustBuyOutput);
-        self::assertStringNotContainsString('GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $onlyMustBuyOutput);
+        self::assertStringContainsString('MUST BUY (Score 90-100)', $onlyMustBuyOutput);
+        self::assertStringNotContainsString('EXTREMELY GOOD (Score 70-89)', $onlyMustBuyOutput);
     }
 }

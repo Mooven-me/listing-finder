@@ -39,6 +39,7 @@ class DashboardAnalyticsService
         $totalListings = $this->listingRepository->count([]);
         $totalEvaluated = $this->evaluationRepository->count([]);
         $mustBuyTotal = $this->evaluationRepository->count(['category' => DealCategory::MustBuy]);
+        $extremelyGoodTotal = $this->evaluationRepository->count(['category' => DealCategory::ExtremelyGood]);
         $goodTotal = $this->evaluationRepository->count(['category' => DealCategory::Good]);
 
         $queuedMessages = 0;
@@ -54,10 +55,12 @@ class DashboardAnalyticsService
             'total_listings' => $totalListings,
             'total_evaluated' => $totalEvaluated,
             'must_buy_total' => $mustBuyTotal,
+            'extremely_good_total' => $extremelyGoodTotal,
             'good_total' => $goodTotal,
             'queued_messages' => $queuedMessages,
             'ai_model' => $this->aiModel,
             'ai_provider' => $this->aiProvider,
+            'server_time_iso' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
         ];
     }
 
@@ -76,6 +79,10 @@ class DashboardAnalyticsService
                 'searchRequest' => $search,
                 'category' => DealCategory::MustBuy,
             ]);
+            $extremelyGoodCount = $this->evaluationRepository->count([
+                'searchRequest' => $search,
+                'category' => DealCategory::ExtremelyGood,
+            ]);
             $goodCount = $this->evaluationRepository->count([
                 'searchRequest' => $search,
                 'category' => DealCategory::Good,
@@ -86,6 +93,7 @@ class DashboardAnalyticsService
                 'total_ads' => $totalAds,
                 'evaluated_ads' => $evaluatedAds,
                 'must_buy_count' => $mustBuyCount,
+                'extremely_good_count' => $extremelyGoodCount,
                 'good_count' => $goodCount,
                 'progress_percent' => $totalAds > 0 ? min(100, (int) round(($evaluatedAds / $totalAds) * 100)) : 0,
             ];
@@ -107,9 +115,13 @@ class DashboardAnalyticsService
             ? min(100, (int) round(($totalEvaluatedAds / $totalStoredAds) * 100))
             : 0;
 
-        $mustBuyCount = 0;
-        $goodCount = 0;
-        $passCount = 0;
+        $categoryCounts = [
+            'must_buy' => 0,
+            'extremely_good' => 0,
+            'good' => 0,
+            'bad' => 0,
+            'poor' => 0,
+        ];
         $workingCount = 0;
 
         $prices = [];
@@ -134,6 +146,7 @@ class DashboardAnalyticsService
                 ]),
                 'evaluated_count' => 0,
                 'must_buy_count' => 0,
+                'extremely_good_count' => 0,
                 'good_count' => 0,
                 'score_sum' => 0,
                 'price_sum' => 0.0,
@@ -151,6 +164,7 @@ class DashboardAnalyticsService
                 ]),
                 'evaluated_count' => 0,
                 'must_buy_count' => 0,
+                'extremely_good_count' => 0,
                 'good_count' => 0,
                 'score_sum' => 0,
                 'avg_score' => 0,
@@ -164,6 +178,7 @@ class DashboardAnalyticsService
             $price = $listing->getPrice();
             $providerKey = strtolower($listing->getProvider());
             $tag = $listing->getSearchTopicUsed();
+            $catKey = $eval->getCategory()->value;
 
             $scores[] = $score;
             $prices[] = $price;
@@ -176,11 +191,9 @@ class DashboardAnalyticsService
                 ++$workingCount;
             }
 
-            match ($eval->getCategory()) {
-                DealCategory::MustBuy => ++$mustBuyCount,
-                DealCategory::Good => ++$goodCount,
-                DealCategory::Pass => ++$passCount,
-            };
+            if (isset($categoryCounts[$catKey])) {
+                ++$categoryCounts[$catKey];
+            }
 
             if (null === $bestDeal || $score > $bestDeal->getScoreOutOf100() || ($score === $bestDeal->getScoreOutOf100() && $price < $bestDeal->getListing()->getPrice())) {
                 $bestDeal = $eval;
@@ -195,6 +208,7 @@ class DashboardAnalyticsService
                     ]),
                     'evaluated_count' => 0,
                     'must_buy_count' => 0,
+                    'extremely_good_count' => 0,
                     'good_count' => 0,
                     'score_sum' => 0,
                     'price_sum' => 0.0,
@@ -208,6 +222,8 @@ class DashboardAnalyticsService
             $providerStats[$providerKey]['price_sum'] += $price;
             if (DealCategory::MustBuy === $eval->getCategory()) {
                 ++$providerStats[$providerKey]['must_buy_count'];
+            } elseif (DealCategory::ExtremelyGood === $eval->getCategory()) {
+                ++$providerStats[$providerKey]['extremely_good_count'];
             } elseif (DealCategory::Good === $eval->getCategory()) {
                 ++$providerStats[$providerKey]['good_count'];
             }
@@ -221,6 +237,7 @@ class DashboardAnalyticsService
                     ]),
                     'evaluated_count' => 0,
                     'must_buy_count' => 0,
+                    'extremely_good_count' => 0,
                     'good_count' => 0,
                     'score_sum' => 0,
                     'avg_score' => 0,
@@ -233,17 +250,19 @@ class DashboardAnalyticsService
             $subTopicStats[$tag]['max_score'] = max($subTopicStats[$tag]['max_score'], $score);
             if (DealCategory::MustBuy === $eval->getCategory()) {
                 ++$subTopicStats[$tag]['must_buy_count'];
+            } elseif (DealCategory::ExtremelyGood === $eval->getCategory()) {
+                ++$subTopicStats[$tag]['extremely_good_count'];
             } elseif (DealCategory::Good === $eval->getCategory()) {
                 ++$subTopicStats[$tag]['good_count'];
             }
 
-            if (\count($scatterPoints) < 120) {
+            if (\count($scatterPoints) < 160) {
                 $scatterPoints[] = [
                     'x' => round($price, 2),
                     'y' => $score,
                     'title' => mb_strimwidth($listing->getTitle(), 0, 45, '...'),
                     'provider' => strtoupper($listing->getProvider()),
-                    'category' => $eval->getCategory()->value,
+                    'category' => $catKey,
                     'url' => $listing->getUrl(),
                 ];
             }
@@ -267,10 +286,21 @@ class DashboardAnalyticsService
         $maxPrice = [] !== $prices ? round((float) max($prices), 2) : 0.0;
         $avgScore = [] !== $scores ? (int) round(array_sum($scores) / \count($scores)) : 0;
 
-        $targetPrice = $searchRequest->getTargetPrice();
-        $bestSavingsPercent = 0;
-        if (null !== $bestDeal && $targetPrice > 0) {
-            $bestSavingsPercent = (int) round((($targetPrice - $bestDeal->getListing()->getPrice()) / $targetPrice) * 100);
+        $cronTask = $searchRequest->getCronTask();
+        $cronData = null;
+        if (null !== $cronTask) {
+            $now = new \DateTimeImmutable();
+            $secondsUntilNext = max(0, $cronTask->getNextRunAt()->getTimestamp() - $now->getTimestamp());
+            $cronData = [
+                'active' => true,
+                'interval_minutes' => $cronTask->getIntervalMinutes(),
+                'run_count' => $cronTask->getRunCount(),
+                'last_run_at' => $cronTask->getLastRunAt()?->format('Y-m-d H:i:s'),
+                'last_run_iso' => $cronTask->getLastRunAt()?->format(\DateTimeInterface::ATOM),
+                'next_run_at' => $cronTask->getNextRunAt()->format('Y-m-d H:i:s'),
+                'next_run_iso' => $cronTask->getNextRunAt()->format(\DateTimeInterface::ATOM),
+                'seconds_until_next' => $secondsUntilNext,
+            ];
         }
 
         return [
@@ -278,16 +308,26 @@ class DashboardAnalyticsService
             'total_evaluated_ads' => $totalEvaluatedAds,
             'uncomputed_ads' => max(0, $totalStoredAds - $totalEvaluatedAds),
             'progress_percent' => $progressPercent,
-            'must_buy_count' => $mustBuyCount,
-            'good_count' => $goodCount,
-            'pass_count' => $passCount,
+            'must_buy_count' => $categoryCounts['must_buy'],
+            'extremely_good_count' => $categoryCounts['extremely_good'],
+            'good_count' => $categoryCounts['good'],
+            'bad_count' => $categoryCounts['bad'],
+            'poor_count' => $categoryCounts['poor'],
+            'category_counts' => $categoryCounts,
             'working_count' => $workingCount,
             'avg_score' => $avgScore,
             'avg_price' => $avgPrice,
             'min_price' => $minPrice,
             'max_price' => $maxPrice,
             'best_deal' => $bestDeal,
-            'best_savings_percent' => $bestSavingsPercent,
+            'best_deal_summary' => null !== $bestDeal ? [
+                'title' => $bestDeal->getListing()->getTitle(),
+                'price' => round($bestDeal->getListing()->getPrice(), 2),
+                'currency' => $bestDeal->getListing()->getCurrency(),
+                'score' => $bestDeal->getScoreOutOf100(),
+                'provider' => strtoupper($bestDeal->getListing()->getProvider()),
+                'url' => $bestDeal->getListing()->getUrl(),
+            ] : null,
             'sub_score_averages' => [
                 'price' => [] !== $priceScores ? (int) round(array_sum($priceScores) / \count($priceScores)) : 0,
                 'working' => [] !== $workingScores ? (int) round(array_sum($workingScores) / \count($workingScores)) : 0,
@@ -297,6 +337,7 @@ class DashboardAnalyticsService
             'provider_stats' => array_values($providerStats),
             'sub_topic_stats' => array_values($subTopicStats),
             'scatter_points' => $scatterPoints,
+            'cron' => $cronData,
         ];
     }
 }

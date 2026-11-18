@@ -11,6 +11,7 @@ use App\Entity\ListingEvaluation;
 use App\Entity\SearchRequest;
 use App\Enum\DealCategory;
 use App\Enum\SearchStatus;
+use App\Message\EvaluateListingMessage;
 use App\Repository\ListingEvaluationRepository;
 use App\Repository\ListingRepository;
 use App\Repository\SearchRequestRepository;
@@ -25,6 +26,7 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\MapQueryString;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
@@ -38,6 +40,7 @@ class DashboardController extends AbstractController
         private readonly TopicExpansionAgent $topicExpansionAgent,
         private readonly ListingProviderRegistry $providerRegistry,
         private readonly SearchDispatcherService $searchDispatcher,
+        private readonly MessageBusInterface $messageBus,
         private readonly EntityManagerInterface $entityManager,
         private readonly ValidatorInterface $validator,
     ) {
@@ -61,24 +64,28 @@ class DashboardController extends AbstractController
         }
 
         $analytics = null;
-        $filteredEvaluations = [];
+        $pagination = [
+            'items' => [],
+            'total' => 0,
+            'page' => 1,
+            'per_page' => $filter->normalizedPerPage(),
+            'total_pages' => 1,
+        ];
         $groupedEvaluations = [
             'must_buy' => [],
+            'extremely_good' => [],
             'good' => [],
-            'pass' => [],
+            'bad' => [],
+            'poor' => [],
         ];
 
         if (null !== $activeSearch) {
             $allEvaluations = $this->evaluationRepository->findForSearchRequest($activeSearch);
             $analytics = $this->analyticsService->buildSearchAnalytics($activeSearch, $allEvaluations);
-            $filteredEvaluations = $this->evaluationRepository->findFilteredForDashboard($activeSearch, $filter);
+            $pagination = $this->evaluationRepository->findFilteredPaginatedForDashboard($activeSearch, $filter);
 
-            foreach ($filteredEvaluations as $eval) {
-                match ($eval->getCategory()) {
-                    DealCategory::MustBuy => $groupedEvaluations['must_buy'][] = $eval,
-                    DealCategory::Good => $groupedEvaluations['good'][] = $eval,
-                    DealCategory::Pass => $groupedEvaluations['pass'][] = $eval,
-                };
+            foreach ($pagination['items'] as $eval) {
+                $groupedEvaluations[$eval->getCategory()->value][] = $eval;
             }
         }
 
@@ -88,7 +95,8 @@ class DashboardController extends AbstractController
             'active_search' => $activeSearch,
             'analytics' => $analytics,
             'filter' => $filter,
-            'filtered_evaluations' => $filteredEvaluations,
+            'pagination' => $pagination,
+            'filtered_evaluations' => $pagination['items'],
             'grouped_evaluations' => $groupedEvaluations,
             'available_providers' => $this->providerRegistry->getAvailableProviderNames(),
         ]);
@@ -102,31 +110,11 @@ class DashboardController extends AbstractController
             return $this->json(['error' => 'Search request not found'], Response::HTTP_NOT_FOUND);
         }
 
-        $totalAds = $this->listingRepository->count(['searchRequest' => $searchRequest]);
-        $evaluatedAds = $this->evaluationRepository->count(['searchRequest' => $searchRequest]);
-        $mustBuyCount = $this->evaluationRepository->count([
-            'searchRequest' => $searchRequest,
-            'category' => DealCategory::MustBuy,
-        ]);
-        $goodCount = $this->evaluationRepository->count([
-            'searchRequest' => $searchRequest,
-            'category' => DealCategory::Good,
-        ]);
-        $passCount = $this->evaluationRepository->count([
-            'searchRequest' => $searchRequest,
-            'category' => DealCategory::Pass,
-        ]);
+        $globalStats = $this->analyticsService->getGlobalStats();
+        $allEvaluations = $this->evaluationRepository->findForSearchRequest($searchRequest);
+        $analytics = $this->analyticsService->buildSearchAnalytics($searchRequest, $allEvaluations);
 
-        $queuedMessages = 0;
-        try {
-            $queuedMessages = (int) $this->entityManager->getConnection()->fetchOne('SELECT COUNT(*) FROM messenger_messages');
-        } catch (\Throwable) {
-            $queuedMessages = 0;
-        }
-
-        $progressPercent = $totalAds > 0 ? min(100, (int) round(($evaluatedAds / $totalAds) * 100)) : 0;
-
-        if ($totalAds > 0 && $evaluatedAds >= $totalAds && SearchStatus::Completed !== $searchRequest->getStatus()) {
+        if ($analytics['total_stored_ads'] > 0 && $analytics['total_evaluated_ads'] >= $analytics['total_stored_ads'] && SearchStatus::Completed !== $searchRequest->getStatus()) {
             $searchRequest->setStatus(SearchStatus::Completed);
             $this->entityManager->flush();
         }
@@ -134,13 +122,26 @@ class DashboardController extends AbstractController
         return $this->json([
             'search_id' => $searchRequest->getId(),
             'status' => $searchRequest->getStatus()->value,
-            'total_ads' => $totalAds,
-            'evaluated_ads' => $evaluatedAds,
-            'must_buy_count' => $mustBuyCount,
-            'good_count' => $goodCount,
-            'pass_count' => $passCount,
-            'queued_messages' => $queuedMessages,
-            'progress_percent' => $progressPercent,
+            'global' => $globalStats,
+            'total_ads' => $analytics['total_stored_ads'],
+            'evaluated_ads' => $analytics['total_evaluated_ads'],
+            'progress_percent' => $analytics['progress_percent'],
+            'must_buy_count' => $analytics['must_buy_count'],
+            'extremely_good_count' => $analytics['extremely_good_count'],
+            'good_count' => $analytics['good_count'],
+            'bad_count' => $analytics['bad_count'],
+            'poor_count' => $analytics['poor_count'],
+            'avg_score' => $analytics['avg_score'],
+            'avg_price' => $analytics['avg_price'],
+            'min_price' => $analytics['min_price'],
+            'working_count' => $analytics['working_count'],
+            'sub_score_averages' => $analytics['sub_score_averages'],
+            'best_deal' => $analytics['best_deal_summary'],
+            'provider_stats' => $analytics['provider_stats'],
+            'sub_topic_stats' => $analytics['sub_topic_stats'],
+            'scatter_points' => $analytics['scatter_points'],
+            'cron' => $analytics['cron'],
+            'queued_messages' => $globalStats['queued_messages'],
         ]);
     }
 
@@ -257,6 +258,42 @@ class DashboardController extends AbstractController
         return $this->redirectToRoute('app_dashboard', ['search' => $id]);
     }
 
+    #[Route('/search/{id}/reevaluate', name: 'app_dashboard_search_reevaluate', methods: ['POST'])]
+    public function reevaluateSearch(int $id, Request $request): RedirectResponse
+    {
+        if (!$this->isCsrfTokenValid('dashboard_action_'.$id, (string) $request->request->get('_token'))) {
+            $this->addFlash('error', 'Invalid CSRF token.');
+
+            return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+        }
+
+        $searchRequest = $this->searchRequestRepository->find($id);
+        if (null === $searchRequest) {
+            throw $this->createNotFoundException('Search request not found.');
+        }
+
+        $connection = $this->entityManager->getConnection();
+        $connection->executeStatement('DELETE FROM listing_evaluation WHERE search_request_id = :id', ['id' => $id]);
+        $connection->executeStatement('UPDATE listing SET is_computed = false WHERE search_request_id = :id', ['id' => $id]);
+
+        $searchRequest->setStatus(SearchStatus::Processing);
+        $this->entityManager->flush();
+
+        $listings = $this->listingRepository->findBy(['searchRequest' => $searchRequest]);
+        foreach ($listings as $listing) {
+            if (null !== $listing->getId()) {
+                $this->messageBus->dispatch(new EvaluateListingMessage(
+                    searchRequestId: $id,
+                    listingId: $listing->getId(),
+                ));
+            }
+        }
+
+        $this->addFlash('success', sprintf('Queued %d listings for strict AI re-evaluation.', \count($listings)));
+
+        return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+    }
+
     #[Route('/search/{id}/cron-toggle', name: 'app_dashboard_search_cron_toggle', methods: ['POST'])]
     public function toggleCron(int $id, Request $request): RedirectResponse
     {
@@ -276,13 +313,13 @@ class DashboardController extends AbstractController
             $searchRequest->setCronTask(null);
             $this->entityManager->remove($existingCron);
             $this->entityManager->flush();
-            $this->addFlash('info', sprintf('Stopped recurring 30-minute cron task for Search #%d.', $id));
+            $this->addFlash('info', sprintf('Paused recurring cron task for Search #%d.', $id));
         } else {
             $cronTask = new CronTask($searchRequest, 30, 25);
             $searchRequest->setCronTask($cronTask);
             $this->entityManager->persist($cronTask);
             $this->entityManager->flush();
-            $this->addFlash('success', sprintf('Re-enabled recurring 30-minute cron task for Search #%d.', $id));
+            $this->addFlash('success', sprintf('Enabled recurring 30-minute cron task for Search #%d.', $id));
         }
 
         return $this->redirectToRoute('app_dashboard', ['search' => $id]);
@@ -294,7 +331,7 @@ class DashboardController extends AbstractController
         if (!$this->isCsrfTokenValid('dashboard_action_'.$id, (string) $request->request->get('_token'))) {
             $this->addFlash('error', 'Invalid CSRF token.');
 
-            return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+            return $this->redirectToRoute('app_dashboard');
         }
 
         $searchRequest = $this->searchRequestRepository->find($id);

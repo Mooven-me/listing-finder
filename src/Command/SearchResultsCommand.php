@@ -35,10 +35,10 @@ class SearchResultsCommand extends Command
     {
         $this
             ->addArgument('search', InputArgument::OPTIONAL, 'SearchRequest ID or topic substring (defaults to latest search)')
-            ->addArgument('category', InputArgument::OPTIONAL, 'Filter by a single category: "must_buy" (or "must-buy"), "good", "pass"')
-            ->addOption('category', null, InputOption::VALUE_REQUIRED, 'Filter by a single category: "must_buy" (or "must-buy"), "good", "pass"')
-            ->addOption('all', 'a', InputOption::VALUE_NONE, 'Also display PASS listings scoring below 70/100')
-            ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort mode: "category" (grouped into MUST BUY / GOOD / PASS) or "score" (single flat list sorted by score)', 'category')
+            ->addArgument('category', InputArgument::OPTIONAL, 'Filter by a single category: "must_buy", "extremely_good", "good", "bad", "poor"')
+            ->addOption('category', null, InputOption::VALUE_REQUIRED, 'Filter by a single category: "must_buy", "extremely_good", "good", "bad", "poor"')
+            ->addOption('all', 'a', InputOption::VALUE_NONE, 'Also display BAD and POOR listings scoring below 50/100')
+            ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort mode: "category" or "score"', 'category')
             ->addOption('by-category', 'c', InputOption::VALUE_NONE, 'Shortcut for --sort=category (group results by category)')
             ->addOption('by-score', null, InputOption::VALUE_NONE, 'Shortcut for --sort=score (sort all results by score in a unified list)')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output results as JSON');
@@ -65,7 +65,7 @@ class SearchResultsCommand extends Command
             $selectedCategory = $this->parseCategoryFilter($rawCategoryFilter);
             if (null === $selectedCategory) {
                 $io->error(sprintf(
-                    'Invalid category "%s". Allowed values: "must_buy" (or "must-buy"), "good", "pass".',
+                    'Invalid category "%s". Allowed values: "must_buy", "extremely_good", "good", "bad", "poor".',
                     $rawCategoryFilter,
                 ));
 
@@ -94,7 +94,7 @@ class SearchResultsCommand extends Command
         }
 
         $isSortByScore = 'score' === $sortMode;
-        $showAll = (bool) $input->getOption('all') || DealCategory::Pass === $selectedCategory;
+        $showAll = (bool) $input->getOption('all') || \in_array($selectedCategory, [DealCategory::Bad, DealCategory::Poor], true);
 
         $allEvaluations = $this->evaluationRepository->findForSearchRequest($searchRequest);
 
@@ -116,14 +116,24 @@ class SearchResultsCommand extends Command
             static fn (ListingEvaluation $eval): bool => DealCategory::MustBuy === $eval->getCategory(),
         ));
 
+        $extremelyGood = array_values(array_filter(
+            $allEvaluations,
+            static fn (ListingEvaluation $eval): bool => DealCategory::ExtremelyGood === $eval->getCategory(),
+        ));
+
         $good = array_values(array_filter(
             $allEvaluations,
             static fn (ListingEvaluation $eval): bool => DealCategory::Good === $eval->getCategory(),
         ));
 
-        $pass = array_values(array_filter(
+        $bad = array_values(array_filter(
             $allEvaluations,
-            static fn (ListingEvaluation $eval): bool => DealCategory::Pass === $eval->getCategory(),
+            static fn (ListingEvaluation $eval): bool => DealCategory::Bad === $eval->getCategory(),
+        ));
+
+        $poor = array_values(array_filter(
+            $allEvaluations,
+            static fn (ListingEvaluation $eval): bool => DealCategory::Poor === $eval->getCategory(),
         ));
 
         $cronTask = $searchRequest->getCronTask();
@@ -150,23 +160,31 @@ class SearchResultsCommand extends Command
                 'must_buy' => null === $selectedCategory || DealCategory::MustBuy === $selectedCategory
                     ? array_map($this->normalizeEvaluation(...), $mustBuy)
                     : [],
+                'extremely_good' => null === $selectedCategory || DealCategory::ExtremelyGood === $selectedCategory
+                    ? array_map($this->normalizeEvaluation(...), $extremelyGood)
+                    : [],
                 'good' => null === $selectedCategory || DealCategory::Good === $selectedCategory
                     ? array_map($this->normalizeEvaluation(...), $good)
                     : [],
             ];
 
             if ($showAll) {
-                $payload['pass'] = null === $selectedCategory || DealCategory::Pass === $selectedCategory
-                    ? array_map($this->normalizeEvaluation(...), $pass)
+                $payload['bad'] = null === $selectedCategory || DealCategory::Bad === $selectedCategory
+                    ? array_map($this->normalizeEvaluation(...), $bad)
+                    : [];
+                $payload['poor'] = null === $selectedCategory || DealCategory::Poor === $selectedCategory
+                    ? array_map($this->normalizeEvaluation(...), $poor)
                     : [];
             }
 
             if ($isSortByScore) {
                 $flatList = match ($selectedCategory) {
                     DealCategory::MustBuy => $mustBuy,
+                    DealCategory::ExtremelyGood => $extremelyGood,
                     DealCategory::Good => $good,
-                    DealCategory::Pass => $pass,
-                    null => $showAll ? $allEvaluations : array_merge($mustBuy, $good),
+                    DealCategory::Bad => $bad,
+                    DealCategory::Poor => $poor,
+                    null => $showAll ? $allEvaluations : array_merge($mustBuy, $extremelyGood, $good),
                 };
                 $payload['results_by_score'] = array_map($this->normalizeEvaluation(...), $flatList);
             }
@@ -183,16 +201,18 @@ class SearchResultsCommand extends Command
             ['Topic' => $searchRequest->getTopic()],
             ['Target Price' => sprintf('%.2f EUR', $searchRequest->getTargetPrice())],
             ['Status' => strtoupper($searchRequest->getStatus()->value)],
-            ['Sort Mode' => $isSortByScore ? 'BY SCORE (High -> Low)' : 'BY CATEGORY (MUST BUY / GOOD / PASS)'],
+            ['Sort Mode' => $isSortByScore ? 'BY SCORE (High -> Low)' : 'BY CATEGORY (5 Tiers)'],
             ['Category Filter' => null !== $selectedCategory ? $selectedCategory->label() : 'ALL CATEGORIES'],
             ['Recurring Cron Task' => $cronSummary],
             ['Sub-Topics Searched' => implode(', ', $searchRequest->getGeneratedSubTopics())],
             ['Providers' => implode(', ', $searchRequest->getEnabledProviders())],
             ['Total Stored Ads' => (string) count($searchRequest->getListings())],
             ['Total Evaluated Ads' => (string) count($allEvaluations)],
-            ['MUST BUY Count (90-100 / 9-10)' => (string) count($mustBuy)],
-            ['GOOD Count (70-89 / 7-8)' => (string) count($good)],
-            ['PASS Count (< 70 / < 7)' => (string) count($pass)],
+            ['MUST BUY (90-100)' => (string) count($mustBuy)],
+            ['EXTREMELY GOOD (70-89)' => (string) count($extremelyGood)],
+            ['GOOD (50-69)' => (string) count($good)],
+            ['BAD (30-49)' => (string) count($bad)],
+            ['POOR (0-29)' => (string) count($poor)],
         );
 
         if ([] === $allEvaluations) {
@@ -206,9 +226,11 @@ class SearchResultsCommand extends Command
 
         if (null !== $selectedCategory) {
             [$sectionTitle, $filteredEvaluations] = match ($selectedCategory) {
-                DealCategory::MustBuy => ['MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $mustBuy],
-                DealCategory::Good => ['GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $good],
-                DealCategory::Pass => ['PASS / OTHER ADS (Score < 70 / 100 | < 7.0 / 10)', $pass],
+                DealCategory::MustBuy => ['MUST BUY (Score 90-100)', $mustBuy],
+                DealCategory::ExtremelyGood => ['EXTREMELY GOOD (Score 70-89)', $extremelyGood],
+                DealCategory::Good => ['GOOD (Score 50-69)', $good],
+                DealCategory::Bad => ['BAD (Score 30-49)', $bad],
+                DealCategory::Poor => ['POOR (Score 0-29)', $poor],
             };
 
             $this->renderCategorySection($io, $sectionTitle, $filteredEvaluations, $isSortByScore);
@@ -224,23 +246,26 @@ class SearchResultsCommand extends Command
         }
 
         if ($isSortByScore) {
-            $flatEvaluations = $showAll ? $allEvaluations : array_merge($mustBuy, $good);
+            $flatEvaluations = $showAll ? $allEvaluations : array_merge($mustBuy, $extremelyGood, $good);
             $sectionLabel = $showAll
                 ? 'ALL EVALUATED ADS — SORTED BY SCORE (100 -> 0)'
-                : 'TOP DEALS (SCORE >= 70/100) — SORTED BY SCORE';
+                : 'RECOMMENDED DEALS (SCORE >= 50/100) — SORTED BY SCORE';
             $this->renderCategorySection($io, $sectionLabel, $flatEvaluations, true);
         } else {
-            $this->renderCategorySection($io, 'MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $mustBuy, false);
-            $this->renderCategorySection($io, 'GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $good, false);
+            $this->renderCategorySection($io, 'MUST BUY (Score 90-100)', $mustBuy, false);
+            $this->renderCategorySection($io, 'EXTREMELY GOOD (Score 70-89)', $extremelyGood, false);
+            $this->renderCategorySection($io, 'GOOD (Score 50-69)', $good, false);
 
             if ($showAll) {
-                $this->renderCategorySection($io, 'PASS / OTHER ADS (Score < 70 / 100 | < 7.0 / 10)', $pass, false);
+                $this->renderCategorySection($io, 'BAD (Score 30-49)', $bad, false);
+                $this->renderCategorySection($io, 'POOR (Score 0-29)', $poor, false);
             }
         }
 
         $io->success(sprintf(
-            'Displayed %d MUST BUY and %d GOOD listings out of %d total evaluated ads.',
+            'Displayed %d MUST BUY, %d EXTREMELY GOOD, and %d GOOD listings out of %d total evaluated ads.',
             count($mustBuy),
+            count($extremelyGood),
             count($good),
             count($allEvaluations),
         ));
@@ -255,8 +280,10 @@ class SearchResultsCommand extends Command
 
         return match ($normalized) {
             'must_buy', 'mustbuy', 'must' => DealCategory::MustBuy,
+            'extremely_good', 'extremelygood', 'ext_good' => DealCategory::ExtremelyGood,
             'good', 'good_deals', 'good_deal' => DealCategory::Good,
-            'pass', 'bad', 'other' => DealCategory::Pass,
+            'bad' => DealCategory::Bad,
+            'poor', 'pass', 'other' => DealCategory::Poor,
             default => null,
         };
     }
@@ -288,9 +315,11 @@ class SearchResultsCommand extends Command
             };
 
             $scoreBadge = match ($eval->getCategory()) {
-                DealCategory::MustBuy => sprintf('<fg=green;options=bold>%d/100 (%.1f/10)</>', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
-                DealCategory::Good => sprintf('<fg=cyan;options=bold>%d/100 (%.1f/10)</>', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
-                DealCategory::Pass => sprintf('<fg=yellow>%d/100 (%.1f/10)</>', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
+                DealCategory::MustBuy => sprintf('<fg=green;options=bold>%d/100</>', $eval->getScoreOutOf100()),
+                DealCategory::ExtremelyGood => sprintf('<fg=cyan;options=bold>%d/100</>', $eval->getScoreOutOf100()),
+                DealCategory::Good => sprintf('<fg=white;options=bold>%d/100</>', $eval->getScoreOutOf100()),
+                DealCategory::Bad => sprintf('<fg=yellow>%d/100</>', $eval->getScoreOutOf100()),
+                DealCategory::Poor => sprintf('<fg=red>%d/100</>', $eval->getScoreOutOf100()),
             };
 
             $row = [
@@ -300,8 +329,10 @@ class SearchResultsCommand extends Command
             if ($includeCategoryColumn) {
                 $row[] = match ($eval->getCategory()) {
                     DealCategory::MustBuy => '<bg=green;fg=black;options=bold> MUST BUY </>',
-                    DealCategory::Good => '<bg=cyan;fg=black;options=bold> GOOD </>',
-                    DealCategory::Pass => '<bg=yellow;fg=black> PASS </>',
+                    DealCategory::ExtremelyGood => '<bg=cyan;fg=black;options=bold> EXTREMELY GOOD </>',
+                    DealCategory::Good => '<bg=blue;fg=white;options=bold> GOOD </>',
+                    DealCategory::Bad => '<bg=yellow;fg=black> BAD </>',
+                    DealCategory::Poor => '<bg=red;fg=white> POOR </>',
                 };
             }
 
@@ -337,8 +368,10 @@ class SearchResultsCommand extends Command
             $listing = $eval->getListing();
             $categoryStyle = match ($eval->getCategory()) {
                 DealCategory::MustBuy => 'fg=black;bg=green;options=bold',
-                DealCategory::Good => 'fg=black;bg=cyan;options=bold',
-                DealCategory::Pass => 'fg=black;bg=yellow;options=bold',
+                DealCategory::ExtremelyGood => 'fg=black;bg=cyan;options=bold',
+                DealCategory::Good => 'fg=white;bg=blue;options=bold',
+                DealCategory::Bad => 'fg=black;bg=yellow;options=bold',
+                DealCategory::Poor => 'fg=white;bg=red;options=bold',
             };
 
             $workingText = match ($eval->isWorking()) {

@@ -17,8 +17,10 @@ final readonly class DashboardFilterDto
         public ?string $q = null,
         public ?float $maxPrice = null,
         public bool $onlyWorking = false,
-        public bool $showPass = false,
+        public bool $showPoor = false,
         public string $view = 'cards',
+        public int $page = 1,
+        public int $perPage = 20,
     ) {
     }
 
@@ -32,6 +34,16 @@ final readonly class DashboardFilterDto
         return 'table' === strtolower(trim($this->view));
     }
 
+    public function normalizedPage(): int
+    {
+        return max(1, $this->page);
+    }
+
+    public function normalizedPerPage(): int
+    {
+        return \in_array($this->perPage, [10, 20, 50, 100], true) ? $this->perPage : 20;
+    }
+
     public function resolvedCategory(): ?DealCategory
     {
         if (null === $this->category || '' === trim($this->category)) {
@@ -42,8 +54,10 @@ final readonly class DashboardFilterDto
 
         return match ($normalized) {
             'must_buy', 'mustbuy', 'must' => DealCategory::MustBuy,
+            'extremely_good', 'extremelygood', 'ext_good' => DealCategory::ExtremelyGood,
             'good', 'good_deals', 'good_deal' => DealCategory::Good,
-            'pass', 'bad', 'other' => DealCategory::Pass,
+            'bad' => DealCategory::Bad,
+            'poor', 'pass', 'other' => DealCategory::Poor,
             default => null,
         };
     }

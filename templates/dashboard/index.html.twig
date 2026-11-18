@@ -2,63 +2,85 @@
 
 {% block title %}
     {% if active_search %}
-        {{ active_search.topic }} (#{{ active_search.id }}) — Listing Finder Dashboard
+        {{ active_search.topic }} (#{{ active_search.id }}) — Listing Finder
     {% else %}
-        Listing Finder — AI Deal Intelligence Dashboard
+        Listing Finder — Deal Intelligence
     {% endif %}
 {% endblock %}
 
 {% block body %}
-<div class="min-h-screen flex flex-col lg:flex-row bg-slate-950 text-slate-100">
+{% set baseParams = active_search ? {
+    'search': active_search.id,
+    'sort': filter.sort,
+    'category': filter.category,
+    'provider': filter.provider,
+    'subTopic': filter.subTopic,
+    'q': filter.q,
+    'maxPrice': filter.maxPrice,
+    'onlyWorking': filter.onlyWorking ? 1 : null,
+    'showPoor': filter.showPoor ? 1 : null,
+    'view': filter.view,
+    'perPage': filter.normalizedPerPage
+} : {} %}
+
+<div class="min-h-screen flex flex-col lg:flex-row bg-zinc-950 text-zinc-100">
     {# ==================== LEFT SIDEBAR ==================== #}
-    <aside class="w-full lg:w-80 xl:w-88 shrink-0 bg-slate-900/95 border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col lg:h-screen lg:sticky lg:top-0">
+    <aside class="w-full lg:w-72 xl:w-80 shrink-0 bg-zinc-900/60 border-b lg:border-b-0 lg:border-r border-zinc-800/90 flex flex-col lg:h-screen lg:sticky lg:top-0">
         {# Brand Header #}
-        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
-            <a href="{{ path('app_dashboard') }}" class="flex items-center gap-3 group">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-xl shadow-lg shadow-indigo-500/20">
-                    📡
+        <div class="px-4 py-4 border-b border-zinc-800/90 flex items-center justify-between">
+            <a href="{{ path('app_dashboard') }}" class="flex items-center gap-2.5 group">
+                <div class="w-8 h-8 rounded-md bg-zinc-100 text-zinc-950 flex items-center justify-center">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
+                    </svg>
                 </div>
                 <div>
-                    <h1 class="text-base font-extrabold tracking-tight text-white group-hover:text-indigo-400 transition-colors">
-                        Listing Finder
-                    </h1>
-                    <p class="text-[11px] font-mono text-slate-400">
-                        AI Deal Radar • {{ global_stats.ai_model }}
-                    </p>
+                    <h1 class="text-sm font-semibold tracking-tight text-zinc-100">Listing Finder</h1>
+                    <p class="text-[11px] font-mono text-zinc-500">{{ global_stats.ai_model }}</p>
                 </div>
             </a>
             <button
                 type="button"
                 onclick="document.getElementById('newSearchModal').classList.remove('hidden')"
-                class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20 transition-all"
+                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950 transition-colors"
             >
-                <span>＋ New Search</span>
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+                <span>New</span>
             </button>
         </div>
 
-        {# Global Server Pulse Summary #}
-        <div class="p-4 border-b border-slate-800 bg-slate-950/50 grid grid-cols-3 gap-2 text-center">
-            <div class="p-2 rounded-xl bg-slate-900 border border-slate-800/80">
-                <div class="text-[10px] font-mono uppercase text-slate-400">Total Ads</div>
-                <div class="text-sm font-extrabold font-mono text-white">{{ global_stats.total_listings }}</div>
+        {# Live Global Telemetry Bar #}
+        <div class="px-4 py-3 border-b border-zinc-800/90 bg-zinc-950/40">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Live Telemetry</span>
+                <span class="inline-flex items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+                    <span id="livePulseDot" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    <span id="liveLastSync">Synced</span>
+                </span>
             </div>
-            <div class="p-2 rounded-xl bg-slate-900 border border-slate-800/80">
-                <div class="text-[10px] font-mono uppercase text-slate-400">Evaluated</div>
-                <div class="text-sm font-extrabold font-mono text-cyan-400" id="globalEvaluatedCount">{{ global_stats.total_evaluated }}</div>
-            </div>
-            <div class="p-2 rounded-xl bg-slate-900 border border-slate-800/80">
-                <div class="text-[10px] font-mono uppercase text-slate-400">Queue</div>
-                <div class="text-sm font-extrabold font-mono {{ global_stats.queued_messages > 0 ? 'text-amber-400' : 'text-emerald-400' }}" id="globalQueueCount">
-                    {{ global_stats.queued_messages }}
+            <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="p-2 rounded-md bg-zinc-900 border border-zinc-800">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Total Ads</div>
+                    <div class="text-sm font-semibold font-mono text-zinc-100" id="globalTotalAds">{{ global_stats.total_listings }}</div>
+                </div>
+                <div class="p-2 rounded-md bg-zinc-900 border border-zinc-800">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Evaluated</div>
+                    <div class="text-sm font-semibold font-mono text-zinc-100" id="globalEvaluatedCount">{{ global_stats.total_evaluated }}</div>
+                </div>
+                <div class="p-2 rounded-md bg-zinc-900 border border-zinc-800">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Queue</div>
+                    <div class="text-sm font-semibold font-mono {{ global_stats.queued_messages > 0 ? 'text-amber-400' : 'text-emerald-400' }}" id="globalQueueCount">
+                        {{ global_stats.queued_messages }}
+                    </div>
                 </div>
             </div>
         </div>
 
         {# Saved Searches List #}
-        <div class="p-3 flex-1 overflow-y-auto space-y-2">
-            <div class="px-2 py-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
-                <span>Saved Searches ({{ searches_summaries|length }})</span>
-                <span class="font-mono text-[11px] text-emerald-400">{{ global_stats.active_crons }} Cron Active</span>
+        <div class="p-3 flex-1 overflow-y-auto space-y-1.5">
+            <div class="px-1.5 py-1 flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-500">
+                <span>Searches ({{ searches_summaries|length }})</span>
+                <span id="globalActiveCrons">{{ global_stats.active_crons }} cron</span>
             </div>
 
             {% for item in searches_summaries %}
@@ -66,388 +88,333 @@
                 {% set isCurrent = active_search and active_search.id == s.id %}
                 <a
                     href="{{ path('app_dashboard', {'search': s.id, 'sort': filter.sort, 'view': filter.view}) }}"
-                    class="block p-3.5 rounded-xl border transition-all {{ isCurrent
-                        ? 'bg-indigo-950/60 border-indigo-500/70 shadow-md shadow-indigo-950/50'
-                        : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900' }}"
+                    class="block p-3 rounded-lg border transition-colors {{ isCurrent
+                        ? 'bg-zinc-900 border-zinc-600'
+                        : 'bg-zinc-950/40 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-900/50' }}"
                 >
                     <div class="flex items-start justify-between gap-2">
-                        <div class="font-bold text-sm text-white line-clamp-1">
-                            #{{ s.id }} — {{ s.topic }}
+                        <div class="font-medium text-xs text-zinc-100 line-clamp-1">
+                            #{{ s.id }} {{ s.topic }}
                         </div>
-                        <span class="shrink-0 font-mono text-xs font-bold text-emerald-400">
-                            {{ s.targetPrice|number_format(0) }}€
+                        <span class="shrink-0 font-mono text-[11px] text-zinc-400">
+                            {{ s.targetPrice|number_format(0) }} EUR
                         </span>
                     </div>
 
-                    <div class="mt-2 flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                        <span>{{ item.evaluated_ads }}/{{ item.total_ads }} ads</span>
+                    <div class="mt-2 flex items-center justify-between text-[11px] text-zinc-500 font-mono">
+                        <span>{{ item.evaluated_ads }}/{{ item.total_ads }}</span>
                         <div class="flex items-center gap-1.5">
                             {% if item.must_buy_count > 0 %}
-                                <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
-                                    🔥 {{ item.must_buy_count }}
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900 text-[10px]">
+                                    MB {{ item.must_buy_count }}
                                 </span>
                             {% endif %}
-                            {% if item.good_count > 0 %}
-                                <span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold">
-                                    ✨ {{ item.good_count }}
+                            {% if item.extremely_good_count > 0 %}
+                                <span class="px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-900 text-[10px]">
+                                    EG {{ item.extremely_good_count }}
                                 </span>
                             {% endif %}
-                            {% if s.cronTask %}
-                                <span class="w-2 h-2 rounded-full bg-emerald-400" title="30m Cron Active"></span>
-                            {% else %}
-                                <span class="w-2 h-2 rounded-full bg-slate-600" title="Cron Disabled"></span>
-                            {% endif %}
+                            <span class="w-1.5 h-1.5 rounded-full {{ s.cronTask ? 'bg-emerald-500' : 'bg-zinc-700' }}" title="{{ s.cronTask ? 'Cron Active' : 'Cron Paused' }}"></span>
                         </div>
                     </div>
 
-                    {# Mini Progress Bar #}
-                    <div class="mt-2 w-full h-1 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                            class="h-full {{ item.progress_percent >= 100 ? 'bg-emerald-500' : 'bg-indigo-500 animate-pulse' }}"
-                            style="width: {{ item.progress_percent }}%"
-                        ></div>
+                    <div class="mt-2 w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
+                        <div class="h-full bg-zinc-300" style="width: {{ item.progress_percent }}%"></div>
                     </div>
                 </a>
             {% else %}
-                <div class="p-6 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
-                    No search requests yet. Click <strong>"+ New Search"</strong> above to launch your first AI radar.
+                <div class="p-6 text-center text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-lg">
+                    No search requests configured. Click "New" to start.
                 </div>
             {% endfor %}
         </div>
 
         {# Sidebar Footer #}
-        <div class="p-4 border-t border-slate-800 bg-slate-950/60 text-[11px] font-mono text-slate-400 flex items-center justify-between">
-            <span>AI Provider: <strong class="text-slate-200">{{ global_stats.ai_provider|upper }}</strong></span>
-            <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">● Online</span>
+        <div class="px-4 py-3 border-t border-zinc-800/90 bg-zinc-950/50 text-[11px] font-mono text-zinc-500 flex items-center justify-between">
+            <span>Engine: <span class="text-zinc-300">{{ global_stats.ai_provider|upper }}</span></span>
+            <button type="button" id="toggleAutoRefreshBtn" class="text-[10px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                Auto-refresh: ON
+            </button>
         </div>
     </aside>
 
-    {# ==================== MAIN DASHBOARD CONTENT ==================== #}
+    {# ==================== MAIN CONTENT ==================== #}
     <main class="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 space-y-6">
-        {# Flash Messages #}
+        {# Flash Notifications #}
         {% for label, messages in app.flashes %}
             {% for message in messages %}
                 {% set alertStyle = label == 'error'
-                    ? 'bg-rose-950/80 border-rose-500/60 text-rose-200'
-                    : (label == 'success' ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-200' : 'bg-indigo-950/80 border-indigo-500/60 text-indigo-200')
+                    ? 'bg-rose-950/60 border-rose-900 text-rose-200'
+                    : (label == 'success' ? 'bg-emerald-950/50 border-emerald-900 text-emerald-200' : 'bg-zinc-900 border-zinc-700 text-zinc-200')
                 %}
-                <div class="p-4 rounded-xl border {{ alertStyle }} flex items-center justify-between text-sm shadow-lg">
+                <div class="px-4 py-3 rounded-lg border {{ alertStyle }} flex items-center justify-between text-xs font-mono">
                     <span>{{ message }}</span>
-                    <button type="button" onclick="this.parentElement.remove()" class="text-xs opacity-70 hover:opacity-100 font-mono">✕</button>
+                    <button type="button" onclick="this.parentElement.remove()" class="text-zinc-400 hover:text-white ml-4">Dismiss</button>
                 </div>
             {% endfor %}
         {% endfor %}
 
         {% if active_search and analytics %}
-            {# ==================== 1. SEARCH HEADER & CRON CONTROL BAR ==================== #}
-            <section class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 shadow-xl">
-                <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                    <div class="space-y-2">
-                        <div class="flex flex-wrap items-center gap-2.5">
-                            <span class="px-2.5 py-1 rounded-lg font-mono text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            {# ==================== 1. HEADER & LIVE CRON BAR ==================== #}
+            <section class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-5">
+                <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+                    <div class="space-y-1.5">
+                        <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                            <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
                                 SEARCH #{{ active_search.id }}
                             </span>
                             <span
                                 id="searchStatusBadge"
-                                class="px-2.5 py-1 rounded-lg font-mono text-xs font-bold border {{ active_search.status.value == 'completed'
-                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse' }}"
+                                class="px-2 py-0.5 rounded border {{ active_search.status.value == 'completed'
+                                    ? 'bg-emerald-950/70 text-emerald-300 border-emerald-900'
+                                    : 'bg-amber-950/70 text-amber-300 border-amber-900' }}"
                             >
-                                ● {{ active_search.status.value|upper }}
+                                {{ active_search.status.value|upper }}
                             </span>
-                            <span class="text-xs font-mono text-slate-400">
-                                Created {{ active_search.createdAt|date('Y-m-d H:i') }}
-                            </span>
+                            <span class="text-zinc-500">Created {{ active_search.createdAt|date('Y-m-d H:i') }} UTC</span>
                             {% if active_search.enableImages %}
-                                <span class="px-2 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/30 text-xs font-mono">
-                                    🖼️ Vision AI Enabled
-                                </span>
+                                <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">Vision Enabled</span>
                             {% endif %}
                         </div>
 
-                        <h2 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+                        <h2 class="text-xl sm:text-2xl font-semibold text-zinc-100 tracking-tight">
                             {{ active_search.topic }}
                         </h2>
 
                         {% if active_search.userRequirements %}
-                            <p class="text-sm text-slate-300">
-                                <span class="text-slate-500 font-semibold">Buyer Requirements:</span> {{ active_search.userRequirements }}
+                            <p class="text-xs text-zinc-400">
+                                Requirements: {{ active_search.userRequirements }}
                             </p>
                         {% endif %}
                     </div>
 
-                    {# Action Buttons (Refresh Now, Toggle Cron, Delete) #}
-                    <div class="flex flex-wrap items-center gap-2.5 shrink-0">
+                    {# Action Toolbar #}
+                    <div class="flex flex-wrap items-center gap-2 shrink-0">
                         <form method="post" action="{{ path('app_dashboard_search_refresh', {'id': active_search.id}) }}">
                             <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
-                            <button
-                                type="submit"
-                                class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-slate-950 transition-colors shadow-sm"
-                            >
-                                <span>↻ Fetch New Ads Now</span>
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950 transition-colors">
+                                Fetch New Ads
+                            </button>
+                        </form>
+
+                        <form
+                            method="post"
+                            action="{{ path('app_dashboard_search_reevaluate', {'id': active_search.id}) }}"
+                            onsubmit="return confirm('Re-evaluate all stored listings for Search #{{ active_search.id }} using strict AI rules?');"
+                        >
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-colors">
+                                Re-evaluate All (Strict AI)
                             </button>
                         </form>
 
                         <form method="post" action="{{ path('app_dashboard_search_cron_toggle', {'id': active_search.id}) }}">
                             <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
-                            {% if active_search.cronTask %}
-                                <button
-                                    type="submit"
-                                    class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors"
-                                >
-                                    <span>⏸ Pause {{ active_search.cronTask.intervalMinutes }}m Cron</span>
-                                </button>
-                            {% else %}
-                                <button
-                                    type="submit"
-                                    class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition-colors"
-                                >
-                                    <span>▶ Enable 30m Cron</span>
-                                </button>
-                            {% endif %}
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors">
+                                {{ active_search.cronTask ? 'Pause Cron' : 'Enable Cron' }}
+                            </button>
                         </form>
 
                         <form
                             method="post"
                             action="{{ path('app_dashboard_search_delete', {'id': active_search.id}) }}"
-                            onsubmit="return confirm('Delete Search #{{ active_search.id }} and all its listings?');"
+                            onsubmit="return confirm('Delete Search #{{ active_search.id }} and all stored listings?');"
                         >
                             <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
-                            <button
-                                type="submit"
-                                class="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 transition-colors"
-                            >
-                                <span>🗑 Delete</span>
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-950 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 border border-zinc-800 hover:border-rose-900 transition-colors">
+                                Delete
                             </button>
                         </form>
                     </div>
                 </div>
 
-                {# AI Sub-Topics Pills & Cron Schedule Info #}
-                <div class="mt-4 pt-4 border-t border-slate-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                    <div class="flex items-center gap-1.5 flex-wrap">
-                        <span class="text-xs font-mono uppercase text-slate-400 mr-1">AI Sub-Topics:</span>
+                {# Live Cron Schedule Panel #}
+                <div class="mt-4 pt-4 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Cron Status</div>
+                        <div class="mt-0.5 text-zinc-200" id="cronStatusText">
+                            {% if analytics.cron %}
+                                Active (Every {{ analytics.cron.interval_minutes }}m)
+                            {% else %}
+                                Disabled
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Last Run</div>
+                        <div class="mt-0.5 text-zinc-200" id="cronLastRun">
+                            {{ analytics.cron and analytics.cron.last_run_at ? analytics.cron.last_run_at ~ ' UTC' : 'Never' }}
+                        </div>
+                    </div>
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Next Scheduled Run</div>
+                        <div class="mt-0.5 text-zinc-200" id="cronNextRun">
+                            {{ analytics.cron ? analytics.cron.next_run_at ~ ' UTC' : '—' }}
+                        </div>
+                    </div>
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Live Countdown / Runs</div>
+                        <div class="mt-0.5 flex items-center justify-between">
+                            <span class="text-emerald-400 font-semibold" id="cronCountdown">
+                                {{ analytics.cron ? '--:--' : 'Paused' }}
+                            </span>
+                            <span class="text-zinc-500" id="cronRunCount">
+                                {{ analytics.cron ? 'Runs: ' ~ analytics.cron.run_count : '' }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {# AI Sub-Topics Filter Row #}
+                <div class="mt-4 pt-3 border-t border-zinc-800/70 flex items-center gap-1.5 flex-wrap">
+                    <span class="text-[11px] font-mono uppercase text-zinc-500 mr-1">Sub-Topics:</span>
+                    <a
+                        href="{{ path('app_dashboard', baseParams|merge({'subTopic': null, 'page': 1})) }}"
+                        class="px-2 py-0.5 rounded text-[11px] font-mono transition-colors {{ filter.subTopic is null ? 'bg-zinc-100 text-zinc-950 font-medium' : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:border-zinc-600' }}"
+                    >
+                        All ({{ active_search.generatedSubTopics|length }})
+                    </a>
+                    {% for tag in active_search.generatedSubTopics %}
+                        {% set isActiveTag = filter.subTopic == tag %}
                         <a
-                            href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'view': filter.view}) }}"
-                            class="px-2.5 py-1 rounded-lg text-xs font-mono transition-colors {{ filter.subTopic is null ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700' }}"
+                            href="{{ path('app_dashboard', baseParams|merge({'subTopic': isActiveTag ? null : tag, 'page': 1})) }}"
+                            class="px-2 py-0.5 rounded text-[11px] font-mono transition-colors {{ isActiveTag
+                                ? 'bg-zinc-100 text-zinc-950 font-medium'
+                                : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:border-zinc-600' }}"
                         >
-                            All ({{ active_search.generatedSubTopics|length }})
+                            {{ tag }}
                         </a>
-                        {% for tag in active_search.generatedSubTopics %}
-                            {% set isActiveTag = filter.subTopic == tag %}
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'subTopic': isActiveTag ? null : tag, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'view': filter.view}) }}"
-                                class="px-2.5 py-1 rounded-lg text-xs font-mono transition-colors {{ isActiveTag
-                                    ? 'bg-indigo-500 text-white font-bold ring-2 ring-indigo-400'
-                                    : 'bg-slate-950 text-slate-300 border border-slate-800 hover:border-indigo-500/50' }}"
-                            >
-                                {{ tag }}
-                            </a>
-                        {% endfor %}
-                    </div>
-
-                    <div class="text-xs font-mono text-slate-400 shrink-0">
-                        {% if active_search.cronTask %}
-                            <span class="text-emerald-400 font-semibold">● Cron Active</span>
-                            (Every {{ active_search.cronTask.intervalMinutes }}m | Runs: {{ active_search.cronTask.runCount }} | Next: {{ active_search.cronTask.nextRunAt|date('H:i:s') }})
-                        {% else %}
-                            <span class="text-slate-500">○ Recurring Cron Disabled</span>
-                        {% endif %}
-                    </div>
+                    {% endfor %}
                 </div>
 
-                {# Live Evaluation Progress Bar #}
-                <div class="mt-4 pt-3 border-t border-slate-800/60">
-                    <div class="flex items-center justify-between text-xs font-mono mb-1.5">
-                        <span class="text-slate-300">
-                            AI Evaluation Progress (<span id="liveEvaluatedAds">{{ analytics.total_evaluated_ads }}</span> / <span id="liveTotalAds">{{ analytics.total_stored_ads }}</span> listings evaluated by Ollama)
+                {# Live Evaluation Progress #}
+                <div class="mt-4 pt-3 border-t border-zinc-800/70">
+                    <div class="flex items-center justify-between text-[11px] font-mono mb-1.5">
+                        <span class="text-zinc-400">
+                            Evaluation Progress: <strong class="text-zinc-200" id="liveEvaluatedAds">{{ analytics.total_evaluated_ads }}</strong> / <strong class="text-zinc-200" id="liveTotalAds">{{ analytics.total_stored_ads }}</strong> listings
                         </span>
-                        <span class="font-bold text-indigo-400" id="liveProgressPercent">{{ analytics.progress_percent }}%</span>
+                        <span class="text-zinc-200 font-medium" id="liveProgressPercent">{{ analytics.progress_percent }}%</span>
                     </div>
-                    <div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                        <div
-                            id="liveProgressBar"
-                            class="h-full bg-gradient-to-r from-indigo-500 via-cyan-500 to-emerald-500 transition-all duration-500"
-                            style="width: {{ analytics.progress_percent }}%"
-                        ></div>
+                    <div class="w-full h-1.5 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+                        <div id="liveProgressBar" class="h-full bg-zinc-200 transition-all duration-500" style="width: {{ analytics.progress_percent }}%"></div>
                     </div>
                 </div>
             </section>
 
-            {# ==================== 2. KPI SUMMARY CARDS ==================== #}
-            <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
-                {# Target Price Card #}
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 flex flex-col justify-between">
-                    <div class="flex items-center justify-between text-xs font-mono uppercase text-slate-400">
-                        <span>Target Budget</span>
-                        <span class="text-lg">🎯</span>
-                    </div>
-                    <div class="mt-2">
-                        <div class="text-2xl font-extrabold font-mono text-white">
-                            {{ active_search.targetPrice|number_format(2) }} EUR
-                        </div>
-                        <div class="mt-1 text-xs text-slate-400 font-mono">
-                            Avg Ad: {{ analytics.avg_price|number_format(2) }}€ | Min: {{ analytics.min_price|number_format(2) }}€
-                        </div>
-                    </div>
-                </div>
-
-                {# MUST BUY Card #}
+            {# ==================== 2. 5-TIER KPI CARDS ==================== #}
+            <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 <a
-                    href="{{ path('app_dashboard', {'search': active_search.id, 'category': filter.category == 'must_buy' ? null : 'must_buy', 'sort': filter.sort, 'view': filter.view}) }}"
-                    class="rounded-2xl border {{ filter.category == 'must_buy' ? 'border-emerald-400 ring-2 ring-emerald-500/40' : 'border-emerald-500/30 hover:border-emerald-500/60' }} bg-emerald-950/20 p-4 flex flex-col justify-between transition-all"
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'must_buy' ? null : 'must_buy', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'must_buy' ? 'border-emerald-500 bg-emerald-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
                 >
-                    <div class="flex items-center justify-between text-xs font-mono uppercase text-emerald-300">
-                        <span>MUST BUY (90-100)</span>
-                        <span class="text-lg">🔥</span>
-                    </div>
-                    <div class="mt-2">
-                        <div class="text-3xl font-extrabold font-mono text-emerald-400" id="liveMustBuyCount">
-                            {{ analytics.must_buy_count }}
-                        </div>
-                        <div class="mt-1 text-xs text-emerald-300/80 font-mono">
-                            Score 9.0–10/10 • Click to filter
-                        </div>
-                    </div>
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Must Buy (90-100)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-emerald-400" id="liveMustBuyCount">{{ analytics.must_buy_count }}</div>
                 </a>
 
-                {# GOOD DEALS Card #}
                 <a
-                    href="{{ path('app_dashboard', {'search': active_search.id, 'category': filter.category == 'good' ? null : 'good', 'sort': filter.sort, 'view': filter.view}) }}"
-                    class="rounded-2xl border {{ filter.category == 'good' ? 'border-cyan-400 ring-2 ring-cyan-500/40' : 'border-cyan-500/30 hover:border-cyan-500/60' }} bg-cyan-950/20 p-4 flex flex-col justify-between transition-all"
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'extremely_good' ? null : 'extremely_good', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'extremely_good' ? 'border-sky-500 bg-sky-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
                 >
-                    <div class="flex items-center justify-between text-xs font-mono uppercase text-cyan-300">
-                        <span>GOOD DEALS (70-89)</span>
-                        <span class="text-lg">✨</span>
-                    </div>
-                    <div class="mt-2">
-                        <div class="text-3xl font-extrabold font-mono text-cyan-400" id="liveGoodCount">
-                            {{ analytics.good_count }}
-                        </div>
-                        <div class="mt-1 text-xs text-cyan-300/80 font-mono">
-                            Score 7.0–8.9/10 • Click to filter
-                        </div>
-                    </div>
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Extremely Good (70-89)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-sky-400" id="liveExtremelyGoodCount">{{ analytics.extremely_good_count }}</div>
                 </a>
 
-                {# Average Score & Sub-Scores Card #}
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 flex flex-col justify-between">
-                    <div class="flex items-center justify-between text-xs font-mono uppercase text-slate-400">
-                        <span>Avg AI Score</span>
-                        <span class="text-lg">📊</span>
-                    </div>
-                    <div class="mt-2">
-                        <div class="text-2xl font-extrabold font-mono text-indigo-400">
-                            {{ analytics.avg_score }}/100
-                            <span class="text-xs font-normal text-slate-400">({{ analytics.working_count }} functional)</span>
-                        </div>
-                        <div class="mt-1 text-[11px] text-slate-400 font-mono">
-                            P:{{ analytics.sub_score_averages.price }} W:{{ analytics.sub_score_averages.working }} A:{{ analytics.sub_score_averages.age }} R:{{ analytics.sub_score_averages.relevance }}
-                        </div>
-                    </div>
-                </div>
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'good' ? null : 'good', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'good' ? 'border-zinc-400 bg-zinc-800/50' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Good (50-69)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-zinc-200" id="liveGoodCount">{{ analytics.good_count }}</div>
+                </a>
 
-                {# Best Deal Spotlight Card #}
-                <div class="rounded-2xl border border-indigo-500/30 bg-indigo-950/20 p-4 flex flex-col justify-between">
-                    <div class="flex items-center justify-between text-xs font-mono uppercase text-indigo-300">
-                        <span>Top Deal Found</span>
-                        <span class="text-lg">🏆</span>
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'bad' ? null : 'bad', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'bad' ? 'border-amber-500 bg-amber-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Bad (30-49)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-amber-400" id="liveBadCount">{{ analytics.bad_count }}</div>
+                </a>
+
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'poor' ? null : 'poor', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'poor' ? 'border-rose-500 bg-rose-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Poor (0-29)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-rose-400" id="livePoorCount">{{ analytics.poor_count }}</div>
+                </a>
+
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3.5">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Avg Score / Target</div>
+                    <div class="mt-1.5 flex items-baseline justify-between font-mono">
+                        <span class="text-2xl font-semibold text-zinc-100" id="liveAvgScore">{{ analytics.avg_score }}</span>
+                        <span class="text-xs text-zinc-400">{{ active_search.targetPrice|number_format(0) }} EUR</span>
                     </div>
-                    {% if analytics.best_deal %}
-                        <div class="mt-1">
-                            <a href="{{ analytics.best_deal.listing.url }}" target="_blank" class="text-xs font-bold text-white hover:text-indigo-300 line-clamp-1">
-                                {{ analytics.best_deal.listing.title }}
-                            </a>
-                            <div class="mt-1 flex items-baseline gap-2">
-                                <span class="text-xl font-extrabold font-mono text-emerald-400">
-                                    {{ analytics.best_deal.listing.price|number_format(2) }}€
-                                </span>
-                                <span class="text-xs font-mono font-bold text-indigo-300">
-                                    {{ analytics.best_deal.scoreOutOf100 }}/100
-                                </span>
-                            </div>
-                        </div>
-                    {% else %}
-                        <div class="text-xs text-slate-500 font-mono mt-2">Waiting for evaluations...</div>
-                    {% endif %}
                 </div>
             </section>
 
-            {# ==================== 3. ANALYTICS CHARTS SECTION ==================== #}
+            {# ==================== 3. LIVE CHARTS ==================== #}
             <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {# Chart 1: Deal Category Breakdown #}
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 flex flex-col">
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
                     <div class="flex items-center justify-between mb-3">
-                        <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
-                            Deal Category Distribution
-                        </h3>
-                        <span class="text-xs font-mono text-slate-500">{{ analytics.total_evaluated_ads }} evaluated</span>
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Score Tier Distribution</h3>
+                        <span class="text-[10px] font-mono text-zinc-500">5 brackets</span>
                     </div>
-                    <div class="relative h-56 flex items-center justify-center">
+                    <div class="relative h-52">
                         <canvas id="categoryChart"></canvas>
                     </div>
                 </div>
 
-                {# Chart 2: Provider Performance & Breakdown #}
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 flex flex-col">
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
                     <div class="flex items-center justify-between mb-3">
-                        <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
-                            Marketplace Provider Breakdown
-                        </h3>
-                        <span class="text-xs font-mono text-slate-500">Stored vs Good+ Deals</span>
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Provider Comparison</h3>
+                        <span class="text-[10px] font-mono text-zinc-500">Total vs >= 50 Score</span>
                     </div>
-                    <div class="relative h-56">
+                    <div class="relative h-52">
                         <canvas id="providerChart"></canvas>
                     </div>
                 </div>
 
-                {# Chart 3: Score vs Price Scatter Plot #}
-                <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 flex flex-col">
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
                     <div class="flex items-center justify-between mb-3">
-                        <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
-                            Score vs. Price Sweet-Spot
-                        </h3>
-                        <span class="text-xs font-mono text-emerald-400">Top-Left = Best Bargains</span>
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Score vs. Price Plot</h3>
+                        <span class="text-[10px] font-mono text-zinc-500">Top-left = best value</span>
                     </div>
-                    <div class="relative h-56">
+                    <div class="relative h-52">
                         <canvas id="scatterChart"></canvas>
                     </div>
                 </div>
             </section>
 
-            {# Sub-Topic Performance Breakdown Table #}
-            <details class="rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden group">
-                <summary class="px-5 py-3.5 cursor-pointer flex items-center justify-between text-xs font-mono font-bold uppercase tracking-wider text-slate-300 hover:bg-slate-900">
-                    <span>🔎 AI Sub-Topic & Provider Telemetry Matrix (Click to expand)</span>
-                    <span class="text-indigo-400 group-open:rotate-180 transition-transform">▼</span>
+            {# Telemetry Matrix (Collapsible) #}
+            <details class="rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden group">
+                <summary class="px-4 py-3 cursor-pointer flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/70">
+                    <span>Sub-Topic & Provider Telemetry Matrix</span>
+                    <span class="text-zinc-500">Toggle</span>
                 </summary>
-                <div class="p-5 border-t border-slate-800 grid grid-cols-1 xl:grid-cols-2 gap-6">
-                    {# Sub-Topic Table #}
+                <div class="p-4 border-t border-zinc-800 grid grid-cols-1 xl:grid-cols-2 gap-6">
                     <div>
-                        <h4 class="text-xs font-mono uppercase text-slate-400 mb-2">AI Sub-Topic Tag Yield</h4>
-                        <div class="overflow-x-auto rounded-xl border border-slate-800">
+                        <h4 class="text-[10px] font-mono uppercase text-zinc-500 mb-2">Sub-Topic Yield</h4>
+                        <div class="overflow-x-auto rounded-md border border-zinc-800">
                             <table class="w-full text-left text-xs font-mono">
-                                <thead class="bg-slate-950 text-slate-400 uppercase">
+                                <thead class="bg-zinc-950 text-zinc-500 uppercase text-[10px]">
                                     <tr>
-                                        <th class="py-2.5 px-3">Sub-Topic Tag</th>
-                                        <th class="py-2.5 px-3">Ads</th>
-                                        <th class="py-2.5 px-3">🔥 Must</th>
-                                        <th class="py-2.5 px-3">✨ Good</th>
-                                        <th class="py-2.5 px-3">Avg / Max Score</th>
+                                        <th class="py-2 px-3">Tag</th>
+                                        <th class="py-2 px-3">Ads</th>
+                                        <th class="py-2 px-3">MB</th>
+                                        <th class="py-2 px-3">EG</th>
+                                        <th class="py-2 px-3">Avg / Max</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-slate-800/70">
+                                <tbody class="divide-y divide-zinc-800/70" id="subTopicTelemetryBody">
                                     {% for st in analytics.sub_topic_stats %}
-                                        <tr class="hover:bg-slate-800/40">
-                                            <td class="py-2 px-3 font-bold text-indigo-300">
-                                                <a href="{{ path('app_dashboard', {'search': active_search.id, 'subTopic': st.tag, 'sort': filter.sort}) }}" class="hover:underline">
-                                                    {{ st.tag }}
-                                                </a>
+                                        <tr class="hover:bg-zinc-800/30">
+                                            <td class="py-2 px-3 text-zinc-200">
+                                                <a href="{{ path('app_dashboard', baseParams|merge({'subTopic': st.tag, 'page': 1})) }}" class="hover:underline">{{ st.tag }}</a>
                                             </td>
-                                            <td class="py-2 px-3">{{ st.stored_count }}</td>
-                                            <td class="py-2 px-3 text-emerald-400 font-bold">{{ st.must_buy_count }}</td>
-                                            <td class="py-2 px-3 text-cyan-400 font-bold">{{ st.good_count }}</td>
-                                            <td class="py-2 px-3">{{ st.avg_score }} / <span class="text-white font-bold">{{ st.max_score }}</span></td>
+                                            <td class="py-2 px-3 text-zinc-400">{{ st.stored_count }}</td>
+                                            <td class="py-2 px-3 text-emerald-400">{{ st.must_buy_count }}</td>
+                                            <td class="py-2 px-3 text-sky-400">{{ st.extremely_good_count }}</td>
+                                            <td class="py-2 px-3 text-zinc-300">{{ st.avg_score }} / {{ st.max_score }}</td>
                                         </tr>
                                     {% endfor %}
                                 </tbody>
@@ -455,33 +422,33 @@
                         </div>
                     </div>
 
-                    {# Provider Telemetry Table #}
                     <div>
-                        <h4 class="text-xs font-mono uppercase text-slate-400 mb-2">Provider Telemetry</h4>
-                        <div class="overflow-x-auto rounded-xl border border-slate-800">
+                        <h4 class="text-[10px] font-mono uppercase text-zinc-500 mb-2">Provider Breakdown</h4>
+                        <div class="overflow-x-auto rounded-md border border-zinc-800">
                             <table class="w-full text-left text-xs font-mono">
-                                <thead class="bg-slate-950 text-slate-400 uppercase">
+                                <thead class="bg-zinc-950 text-zinc-500 uppercase text-[10px]">
                                     <tr>
-                                        <th class="py-2.5 px-3">Provider</th>
-                                        <th class="py-2.5 px-3">Stored</th>
-                                        <th class="py-2.5 px-3">Evaluated</th>
-                                        <th class="py-2.5 px-3">🔥 Must / ✨ Good</th>
-                                        <th class="py-2.5 px-3">Avg Score</th>
-                                        <th class="py-2.5 px-3">Avg Price</th>
+                                        <th class="py-2 px-3">Provider</th>
+                                        <th class="py-2 px-3">Stored</th>
+                                        <th class="py-2 px-3">Evaluated</th>
+                                        <th class="py-2 px-3">MB / EG / G</th>
+                                        <th class="py-2 px-3">Avg Score</th>
+                                        <th class="py-2 px-3">Avg Price</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-slate-800/70">
+                                <tbody class="divide-y divide-zinc-800/70" id="providerTelemetryBody">
                                     {% for p in analytics.provider_stats %}
-                                        <tr class="hover:bg-slate-800/40">
-                                            <td class="py-2 px-3 font-bold text-white">{{ p.name }}</td>
-                                            <td class="py-2 px-3">{{ p.stored_count }}</td>
-                                            <td class="py-2 px-3">{{ p.evaluated_count }}</td>
+                                        <tr class="hover:bg-zinc-800/30">
+                                            <td class="py-2 px-3 text-zinc-200">{{ p.name }}</td>
+                                            <td class="py-2 px-3 text-zinc-400">{{ p.stored_count }}</td>
+                                            <td class="py-2 px-3 text-zinc-400">{{ p.evaluated_count }}</td>
                                             <td class="py-2 px-3">
-                                                <span class="text-emerald-400 font-bold">{{ p.must_buy_count }}</span> /
-                                                <span class="text-cyan-400 font-bold">{{ p.good_count }}</span>
+                                                <span class="text-emerald-400">{{ p.must_buy_count }}</span> /
+                                                <span class="text-sky-400">{{ p.extremely_good_count }}</span> /
+                                                <span class="text-zinc-300">{{ p.good_count }}</span>
                                             </td>
-                                            <td class="py-2 px-3">{{ p.avg_score }}/100</td>
-                                            <td class="py-2 px-3 text-emerald-300">{{ p.avg_price|number_format(2) }} EUR</td>
+                                            <td class="py-2 px-3 text-zinc-200">{{ p.avg_score }}/100</td>
+                                            <td class="py-2 px-3 text-zinc-300">{{ p.avg_price|number_format(2) }} EUR</td>
                                         </tr>
                                     {% endfor %}
                                 </tbody>
@@ -491,96 +458,60 @@
                 </div>
             </details>
 
-            {# ==================== 4. INTERACTIVE FILTER & SORT TOOLBAR ==================== #}
-            <section class="rounded-2xl border border-slate-800 bg-slate-900/95 p-4 shadow-lg sticky top-2 z-20 backdrop-blur">
+            {# ==================== 4. FILTER & SORT TOOLBAR ==================== #}
+            <section class="rounded-lg border border-zinc-800 bg-zinc-900/95 p-3.5 sticky top-2 z-20 backdrop-blur">
                 <form method="get" action="{{ path('app_dashboard') }}" class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
                     <input type="hidden" name="search" value="{{ active_search.id }}">
-                    {% if filter.subTopic %}
-                        <input type="hidden" name="subTopic" value="{{ filter.subTopic }}">
-                    {% endif %}
+                    <input type="hidden" name="sort" value="{{ filter.sort }}">
+                    <input type="hidden" name="view" value="{{ filter.view }}">
+                    <input type="hidden" name="page" value="1">
+                    {% if filter.subTopic %}<input type="hidden" name="subTopic" value="{{ filter.subTopic }}">{% endif %}
+                    {% if filter.category %}<input type="hidden" name="category" value="{{ filter.category }}">{% endif %}
+                    {% if filter.provider %}<input type="hidden" name="provider" value="{{ filter.provider }}">{% endif %}
 
-                    {# Left Controls: Sort Mode + Category Filter + Provider Filter #}
                     <div class="flex flex-wrap items-center gap-2">
-                        {# Sort Mode Toggle (By Category vs By Score) #}
-                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+                        {# Sort Toggle #}
+                        <div class="inline-flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800">
                             <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': 'category', 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
-                                class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors {{ not filter.isSortByScore ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white' }}"
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'category', 'page': 1})) }}"
+                                class="px-2.5 py-1 rounded text-xs font-medium {{ not filter.isSortByScore ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
                             >
-                                📂 By Category
+                                By Category
                             </a>
                             <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': 'score', 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
-                                class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors {{ filter.isSortByScore ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white' }}"
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'score', 'page': 1})) }}"
+                                class="px-2.5 py-1 rounded text-xs font-medium {{ filter.isSortByScore ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
                             >
-                                🏆 By Score (100→0)
-                            </a>
-                        </div>
-
-                        {# Single Category Filter Pills #}
-                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': null, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
-                                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors {{ filter.resolvedCategory is null ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
-                            >
-                                All Deals
-                            </a>
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': 'must_buy', 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'view': filter.view}) }}"
-                                class="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors {{ filter.resolvedCategory and filter.resolvedCategory.value == 'must_buy' ? 'bg-emerald-500 text-slate-950' : 'text-emerald-400 hover:bg-emerald-950/60' }}"
-                            >
-                                🔥 Must Buy ({{ analytics.must_buy_count }})
-                            </a>
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': 'good', 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'view': filter.view}) }}"
-                                class="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors {{ filter.resolvedCategory and filter.resolvedCategory.value == 'good' ? 'bg-cyan-500 text-slate-950' : 'text-cyan-400 hover:bg-cyan-950/60' }}"
-                            >
-                                ✨ Good ({{ analytics.good_count }})
-                            </a>
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': 'pass', 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'view': filter.view}) }}"
-                                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors {{ filter.resolvedCategory and filter.resolvedCategory.value == 'pass' ? 'bg-amber-500 text-slate-950' : 'text-amber-400 hover:bg-amber-950/60' }}"
-                            >
-                                Pass ({{ analytics.pass_count }})
+                                By Score
                             </a>
                         </div>
 
-                        {# Provider Filter Pills #}
-                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': null, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
-                                class="px-2.5 py-1.5 rounded-lg text-xs font-semibold {{ filter.normalizedProvider is null ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
-                            >
-                                All Sites
-                            </a>
+                        {# Category Pills #}
+                        <div class="inline-flex flex-wrap rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-xs">
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': null, 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory is null ? 'bg-zinc-800 text-zinc-100 font-medium' : 'text-zinc-400 hover:text-zinc-200' }}">All</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'must_buy', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'must_buy' ? 'bg-emerald-900 text-emerald-100 font-medium' : 'text-zinc-400 hover:text-emerald-300' }}">Must Buy</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'extremely_good', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'extremely_good' ? 'bg-sky-900 text-sky-100 font-medium' : 'text-zinc-400 hover:text-sky-300' }}">Ext. Good</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'good', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'good' ? 'bg-zinc-700 text-zinc-100 font-medium' : 'text-zinc-400 hover:text-zinc-200' }}">Good</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'bad', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'bad' ? 'bg-amber-900 text-amber-100 font-medium' : 'text-zinc-400 hover:text-amber-300' }}">Bad</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'poor', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'poor' ? 'bg-rose-900 text-rose-100 font-medium' : 'text-zinc-400 hover:text-rose-300' }}">Poor</a>
+                        </div>
+
+                        {# Provider Filter #}
+                        <div class="inline-flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-xs font-mono">
+                            <a href="{{ path('app_dashboard', baseParams|merge({'provider': null, 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.normalizedProvider is null ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200' }}">All</a>
                             {% for pName in ['leboncoin', 'vinted'] %}
-                                <a
-                                    href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': pName, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': filter.view}) }}"
-                                    class="px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase {{ filter.normalizedProvider == pName ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white' }}"
-                                >
-                                    {{ pName }}
-                                </a>
+                                <a href="{{ path('app_dashboard', baseParams|merge({'provider': pName, 'page': 1})) }}" class="px-2 py-1 rounded uppercase {{ filter.normalizedProvider == pName ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200' }}">{{ pName }}</a>
                             {% endfor %}
                         </div>
                     </div>
 
-                    {# Right Controls: Search Input, Max Price, Working Only, Layout Switch #}
                     <div class="flex flex-wrap items-center gap-2">
-                        <input type="hidden" name="sort" value="{{ filter.sort }}">
-                        {% if filter.category %}
-                            <input type="hidden" name="category" value="{{ filter.category }}">
-                        {% endif %}
-                        {% if filter.provider %}
-                            <input type="hidden" name="provider" value="{{ filter.provider }}">
-                        {% endif %}
-                        <input type="hidden" name="view" value="{{ filter.view }}">
-
                         <input
                             type="text"
                             name="q"
                             value="{{ filter.q }}"
-                            placeholder="Filter title or AI analysis..."
-                            class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-44 sm:w-52"
+                            placeholder="Search title or appraisal..."
+                            class="px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 w-44"
                         >
 
                         <input
@@ -590,123 +521,121 @@
                             min="1"
                             value="{{ filter.maxPrice }}"
                             placeholder="Max EUR"
-                            class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-24"
+                            class="px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 w-24"
                         >
 
-                        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 cursor-pointer">
-                            <input type="checkbox" name="onlyWorking" value="1" {{ filter.onlyWorking ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-slate-700 bg-slate-900 text-indigo-600">
-                            <span>Working only</span>
+                        <select name="perPage" onchange="this.form.submit()" class="px-2 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-300 focus:outline-none focus:border-zinc-500">
+                            {% for size in [10, 20, 50, 100] %}
+                                <option value="{{ size }}" {{ filter.normalizedPerPage == size ? 'selected' : '' }}>{{ size }} / page</option>
+                            {% endfor %}
+                        </select>
+
+                        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-400 cursor-pointer">
+                            <input type="checkbox" name="onlyWorking" value="1" {{ filter.onlyWorking ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-zinc-700 bg-zinc-900">
+                            <span>Working</span>
                         </label>
 
-                        <button type="submit" class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors">
-                            Apply
+                        {% if filter.resolvedCategory is null %}
+                            <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-400 cursor-pointer">
+                                <input type="checkbox" name="showPoor" value="1" {{ filter.showPoor ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-zinc-700 bg-zinc-900">
+                                <span>Include Poor</span>
+                            </label>
+                        {% endif %}
+
+                        <button type="submit" class="px-3 py-1.5 rounded-md bg-zinc-200 hover:bg-white text-zinc-950 text-xs font-medium transition-colors">
+                            Filter
                         </button>
 
-                        {# Cards vs Table View Switch #}
-                        <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': 'cards'}) }}"
-                                class="px-2.5 py-1 rounded-lg text-xs font-semibold {{ not filter.isTableView ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
-                                title="Cards View"
-                            >
-                                ⊞ Cards
-                            </a>
-                            <a
-                                href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'category': filter.category, 'provider': filter.provider, 'subTopic': filter.subTopic, 'q': filter.q, 'maxPrice': filter.maxPrice, 'onlyWorking': filter.onlyWorking, 'showPass': filter.showPass, 'view': 'table'}) }}"
-                                class="px-2.5 py-1 rounded-lg text-xs font-semibold {{ filter.isTableView ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white' }}"
-                                title="Compact Table View"
-                            >
-                                ☰ Table
-                            </a>
+                        {# View Toggle #}
+                        <div class="inline-flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-xs">
+                            <a href="{{ path('app_dashboard', baseParams|merge({'view': 'cards'})) }}" class="px-2 py-1 rounded {{ not filter.isTableView ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200' }}">Cards</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'view': 'table'})) }}" class="px-2 py-1 rounded {{ filter.isTableView ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200' }}">Table</a>
                         </div>
                     </div>
                 </form>
             </section>
 
-            {# ==================== 5. LISTINGS RESULTS DISPLAY ==================== #}
+            {# ==================== 5. RESULTS & PAGINATION ==================== #}
+            {% set startRank = ((pagination.page - 1) * pagination.per_page) %}
+
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono text-zinc-400">
+                <div>
+                    Showing <strong class="text-zinc-200">{{ pagination.total > 0 ? startRank + 1 : 0 }}-{{ min(startRank + pagination.items|length, pagination.total) }}</strong>
+                    of <strong class="text-zinc-200">{{ pagination.total }}</strong> matching listings (Page {{ pagination.page }} / {{ pagination.total_pages }})
+                </div>
+                {% if pagination.total_pages > 1 %}
+                    <nav class="inline-flex items-center gap-1">
+                        {% if pagination.page > 1 %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page - 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Prev</a>
+                        {% endif %}
+                        {% for p in max(1, pagination.page - 2)..min(pagination.total_pages, pagination.page + 2) %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': p})) }}" class="px-2.5 py-1 rounded border {{ p == pagination.page ? 'border-zinc-200 bg-zinc-100 text-zinc-950 font-semibold' : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300' }}">{{ p }}</a>
+                        {% endfor %}
+                        {% if pagination.page < pagination.total_pages %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page + 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Next</a>
+                        {% endif %}
+                    </nav>
+                {% endif %}
+            </div>
+
             {% if filtered_evaluations is empty %}
-                <section class="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center space-y-3">
-                    <div class="text-4xl">🔍</div>
-                    <h3 class="text-lg font-bold text-white">No listings match the current filters</h3>
-                    <p class="text-sm text-slate-400 max-w-md mx-auto">
-                        Try clearing a filter pill above or wait a few seconds if the background worker is still evaluating ads with Ollama.
+                <section class="rounded-lg border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center space-y-3">
+                    <h3 class="text-sm font-semibold text-zinc-200">No listings match the current filters</h3>
+                    <p class="text-xs text-zinc-500 max-w-md mx-auto">
+                        Adjust your category, price, or search filters above, or enable "Include Poor" to inspect rejected ads.
                     </p>
                     <div>
-                        <a
-                            href="{{ path('app_dashboard', {'search': active_search.id, 'showPass': 1}) }}"
-                            class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white"
-                        >
-                            Reset Filters & Show All Ads
+                        <a href="{{ path('app_dashboard', {'search': active_search.id, 'showPoor': 1}) }}" class="inline-flex items-center px-3.5 py-1.5 rounded-md text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-100">
+                            Reset Filters & Show All
                         </a>
                     </div>
                 </section>
             {% elseif filter.isTableView %}
                 {# ---------- COMPACT TABLE VIEW ---------- #}
-                <section class="rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-xl">
-                    <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-                        <h3 class="text-sm font-bold text-white">
-                            Showing {{ filtered_evaluations|length }} Evaluated Listings
-                        </h3>
-                        <span class="text-xs font-mono text-slate-400">Sorted by Score DESC, Price ASC</span>
-                    </div>
+                <section class="rounded-lg border border-zinc-800 bg-zinc-900/60 overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-xs">
-                            <thead class="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
+                            <thead class="bg-zinc-950 text-zinc-500 font-mono uppercase text-[10px] border-b border-zinc-800">
                                 <tr>
-                                    <th class="py-3 px-4">#</th>
-                                    <th class="py-3 px-4">Score</th>
-                                    <th class="py-3 px-4">Category</th>
-                                    <th class="py-3 px-4">Provider</th>
-                                    <th class="py-3 px-4">Title & AI Appraisal</th>
-                                    <th class="py-3 px-4">Price</th>
-                                    <th class="py-3 px-4">State / Age</th>
-                                    <th class="py-3 px-4">Sub-Scores</th>
-                                    <th class="py-3 px-4 text-right">Action</th>
+                                    <th class="py-2.5 px-3">#</th>
+                                    <th class="py-2.5 px-3">Score</th>
+                                    <th class="py-2.5 px-3">Tier</th>
+                                    <th class="py-2.5 px-3">Provider</th>
+                                    <th class="py-2.5 px-3">Listing & AI Appraisal</th>
+                                    <th class="py-2.5 px-3">Price</th>
+                                    <th class="py-2.5 px-3">Sub-Scores</th>
+                                    <th class="py-2.5 px-3 text-right">Link</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-slate-800/80">
+                            <tbody class="divide-y divide-zinc-800/70">
                                 {% for eval in filtered_evaluations %}
                                     {% set l = eval.listing %}
                                     {% set cat = eval.category.value %}
-                                    <tr class="hover:bg-slate-800/40 transition-colors align-top">
-                                        <td class="py-3.5 px-4 font-mono text-slate-500">#{{ loop.index }}</td>
-                                        <td class="py-3.5 px-4 font-mono font-extrabold text-sm {{ cat == 'must_buy' ? 'text-emerald-400' : (cat == 'good' ? 'text-cyan-400' : 'text-amber-400') }}">
+                                    <tr class="hover:bg-zinc-800/30 align-top">
+                                        <td class="py-3 px-3 font-mono text-zinc-500">{{ startRank + loop.index }}</td>
+                                        <td class="py-3 px-3 font-mono font-semibold {{ cat == 'must_buy' ? 'text-emerald-400' : (cat == 'extremely_good' ? 'text-sky-400' : (cat == 'good' ? 'text-zinc-200' : (cat == 'bad' ? 'text-amber-400' : 'text-rose-400'))) }}">
                                             {{ eval.scoreOutOf100 }}/100
-                                            <div class="text-[10px] font-normal text-slate-500">{{ eval.scoreOutOf10|number_format(1) }}/10</div>
                                         </td>
-                                        <td class="py-3.5 px-4">
-                                            <span class="px-2 py-0.5 rounded-full text-[11px] font-bold {{ cat == 'must_buy' ? 'bg-emerald-500/20 text-emerald-300' : (cat == 'good' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-amber-500/20 text-amber-300') }}">
-                                                {{ eval.category.label }}
-                                            </span>
-                                        </td>
-                                        <td class="py-3.5 px-4 font-mono font-bold uppercase text-slate-200">
+                                        <td class="py-3 px-3 font-mono text-[11px] text-zinc-300 whitespace-nowrap">{{ eval.category.shortLabel }}</td>
+                                        <td class="py-3 px-3 font-mono uppercase text-zinc-300">
                                             {{ l.provider }}
-                                            <div class="text-[10px] text-indigo-400 font-normal">{{ l.searchTopicUsed }}</div>
+                                            <div class="text-[10px] text-zinc-500 normal-case">{{ l.searchTopicUsed }}</div>
                                         </td>
-                                        <td class="py-3.5 px-4 max-w-xl">
-                                            <a href="{{ l.url }}" target="_blank" class="font-bold text-white hover:text-indigo-400 text-sm block mb-1">
-                                                {{ l.title }}
-                                            </a>
-                                            <div class="p-2.5 rounded-lg bg-indigo-950/40 border-l-2 border-indigo-500 text-slate-300 text-xs leading-relaxed">
-                                                <strong class="text-indigo-300 font-mono text-[10px] uppercase">AI Analysis:</strong>
+                                        <td class="py-3 px-3 max-w-xl">
+                                            <a href="{{ l.url }}" target="_blank" class="font-medium text-zinc-100 hover:underline block mb-1">{{ l.title }}</a>
+                                            <div class="p-2 rounded bg-zinc-950/80 border-l-2 border-zinc-600 text-zinc-400 text-[11px] leading-relaxed">
                                                 {{ eval.aiReasoning }}
                                             </div>
                                         </td>
-                                        <td class="py-3.5 px-4 font-mono font-extrabold text-base text-emerald-400 whitespace-nowrap">
+                                        <td class="py-3 px-3 font-mono font-semibold text-zinc-100 whitespace-nowrap">
                                             {{ l.price|number_format(2) }} {{ l.currency }}
                                         </td>
-                                        <td class="py-3.5 px-4 text-slate-300">
-                                            <div>{{ l.conditionState ?? 'Unspecified' }}</div>
-                                            <div class="text-[11px] text-slate-500">{{ eval.estimatedAge ?? 'N/A' }}</div>
+                                        <td class="py-3 px-3 font-mono text-[10px] text-zinc-400 whitespace-nowrap">
+                                            <div>R:{{ eval.relevanceScore }} P:{{ eval.priceScore }}</div>
+                                            <div>W:{{ eval.workingConditionScore }} A:{{ eval.productAgeScore }}</div>
                                         </td>
-                                        <td class="py-3.5 px-4 font-mono text-[11px] text-slate-300 whitespace-nowrap">
-                                            <div>P:{{ eval.priceScore }} W:{{ eval.workingConditionScore }}</div>
-                                            <div>A:{{ eval.productAgeScore }} R:{{ eval.relevanceScore }}</div>
-                                        </td>
-                                        <td class="py-3.5 px-4 text-right whitespace-nowrap">
-                                            <a href="{{ l.url }}" target="_blank" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold">
-                                                Open ↗
-                                            </a>
+                                        <td class="py-3 px-3 text-right whitespace-nowrap">
+                                            <a href="{{ l.url }}" target="_blank" class="px-2.5 py-1 rounded bg-zinc-100 hover:bg-white text-zinc-950 font-medium">Open</a>
                                         </td>
                                     </tr>
                                 {% endfor %}
@@ -715,255 +644,148 @@
                     </div>
                 </section>
             {% elseif filter.isSortByScore or filter.resolvedCategory is not null %}
-                {# ---------- UNIFIED SCORE-RANKED CARDS VIEW (OR SINGLE CATEGORY) ---------- #}
-                <section class="space-y-4">
-                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                        <div class="flex items-center gap-2.5">
-                            <h3 class="text-lg font-extrabold text-white">
-                                {% if filter.resolvedCategory %}
-                                    {{ filter.resolvedCategory.label }} — Filtered Listings
-                                {% else %}
-                                    🏆 All Deals Ranked by AI Score (High → Low)
-                                {% endif %}
-                            </h3>
-                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-indigo-500/20 text-indigo-300">
-                                {{ filtered_evaluations|length }} results
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        {% for eval in filtered_evaluations %}
-                            {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
-                        {% endfor %}
-                    </div>
+                <section class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {% for eval in filtered_evaluations %}
+                        {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': startRank + loop.index, 'active_search': active_search} %}
+                    {% endfor %}
                 </section>
             {% else %}
-                {# ---------- GROUPED BY CATEGORY CARDS VIEW ---------- #}
-                {# 1. MUST BUY SECTION #}
-                <section class="space-y-4">
-                    <div class="flex items-center justify-between border-b border-emerald-500/30 pb-3">
-                        <div class="flex items-center gap-2.5">
-                            <span class="text-xl">🔥</span>
-                            <h3 class="text-lg font-extrabold text-emerald-400 tracking-tight">
-                                MUST BUY DEALS (Score 90–100 / 100 | 9.0–10.0 / 10)
-                            </h3>
-                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                {{ grouped_evaluations.must_buy|length }}
-                            </span>
-                        </div>
-                        <a
-                            href="{{ path('app_dashboard', {'search': active_search.id, 'category': 'must_buy'}) }}"
-                            class="text-xs font-mono text-emerald-400 hover:underline"
-                        >
-                            Show only MUST BUY →
-                        </a>
-                    </div>
+                {# ---------- GROUPED BY 5 TIERS ---------- #}
+                {% set tierDefinitions = [
+                    {'key': 'must_buy', 'title': 'Must Buy (90-100)', 'color': 'text-emerald-400', 'border': 'border-emerald-900/70'},
+                    {'key': 'extremely_good', 'title': 'Extremely Good (70-89)', 'color': 'text-sky-400', 'border': 'border-sky-900/70'},
+                    {'key': 'good', 'title': 'Good (50-69)', 'color': 'text-zinc-200', 'border': 'border-zinc-800'},
+                    {'key': 'bad', 'title': 'Bad (30-49)', 'color': 'text-amber-400', 'border': 'border-amber-900/60'},
+                    {'key': 'poor', 'title': 'Poor (0-29)', 'color': 'text-rose-400', 'border': 'border-rose-900/60'}
+                ] %}
 
-                    {% if grouped_evaluations.must_buy is not empty %}
-                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            {% for eval in grouped_evaluations.must_buy %}
-                                {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
-                            {% endfor %}
-                        </div>
-                    {% else %}
-                        <div class="rounded-xl border border-slate-800/80 bg-slate-900/40 p-6 text-center text-xs font-mono text-slate-400">
-                            No listings in the 90–100 score bracket for the current filters.
-                        </div>
-                    {% endif %}
-                </section>
-
-                {# 2. GOOD DEALS SECTION #}
-                <section class="space-y-4 pt-4">
-                    <div class="flex items-center justify-between border-b border-cyan-500/30 pb-3">
-                        <div class="flex items-center gap-2.5">
-                            <span class="text-xl">✨</span>
-                            <h3 class="text-lg font-extrabold text-cyan-400 tracking-tight">
-                                GOOD DEALS (Score 70–89 / 100 | 7.0–8.9 / 10)
-                            </h3>
-                            <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                                {{ grouped_evaluations.good|length }}
-                            </span>
-                        </div>
-                        <a
-                            href="{{ path('app_dashboard', {'search': active_search.id, 'category': 'good'}) }}"
-                            class="text-xs font-mono text-cyan-400 hover:underline"
-                        >
-                            Show only GOOD →
-                        </a>
-                    </div>
-
-                    {% if grouped_evaluations.good is not empty %}
-                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            {% for eval in grouped_evaluations.good %}
-                                {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
-                            {% endfor %}
-                        </div>
-                    {% else %}
-                        <div class="rounded-xl border border-slate-800/80 bg-slate-900/40 p-6 text-center text-xs font-mono text-slate-400">
-                            No listings in the 70–89 score bracket for the current filters.
-                        </div>
-                    {% endif %}
-                </section>
-
-                {# 3. PASS / OTHER ADS SECTION #}
-                {% if filter.showPass and grouped_evaluations.pass is not empty %}
-                    <section class="space-y-4 pt-4">
-                        <div class="flex items-center justify-between border-b border-amber-500/30 pb-3">
-                            <div class="flex items-center gap-2.5">
-                                <span class="text-xl">⏭️</span>
-                                <h3 class="text-lg font-extrabold text-amber-400 tracking-tight">
-                                    PASS / OTHER ADS (Score &lt; 70 / 100)
-                                </h3>
-                                <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-500/20 text-amber-300">
-                                    {{ grouped_evaluations.pass|length }}
-                                </span>
+                {% set runningRank = startRank %}
+                {% for tier in tierDefinitions %}
+                    {% set items = grouped_evaluations[tier.key] %}
+                    {% if items is not empty %}
+                        <section class="space-y-3">
+                            <div class="flex items-center justify-between border-b {{ tier.border }} pb-2">
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-sm font-mono font-semibold uppercase tracking-wider {{ tier.color }}">
+                                        {{ tier.title }}
+                                    </h3>
+                                    <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-900 text-zinc-400 border border-zinc-800">
+                                        {{ items|length }} on page
+                                    </span>
+                                </div>
+                                <a href="{{ path('app_dashboard', baseParams|merge({'category': tier.key, 'page': 1})) }}" class="text-[11px] font-mono text-zinc-400 hover:text-zinc-200">
+                                    Filter tier
+                                </a>
                             </div>
-                        </div>
-                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            {% for eval in grouped_evaluations.pass %}
-                                {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': loop.index, 'active_search': active_search} %}
-                            {% endfor %}
-                        </div>
-                    </section>
-                {% elseif analytics.pass_count > 0 %}
-                    <div class="pt-2 text-center">
-                        <a
-                            href="{{ path('app_dashboard', {'search': active_search.id, 'sort': filter.sort, 'showPass': 1, 'view': filter.view}) }}"
-                            class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono text-slate-400 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700"
-                        >
-                            <span>+ Show {{ analytics.pass_count }} Lower-Scored "PASS" Listings (&lt; 70/100)</span>
-                        </a>
-                    </div>
-                {% endif %}
+
+                            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                {% for eval in items %}
+                                    {% set runningRank = runningRank + 1 %}
+                                    {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': runningRank, 'active_search': active_search} %}
+                                {% endfor %}
+                            </div>
+                        </section>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+
+            {# Bottom Pagination Controls #}
+            {% if pagination.total_pages > 1 %}
+                <div class="pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono">
+                    <span class="text-zinc-500">Page {{ pagination.page }} of {{ pagination.total_pages }} ({{ pagination.total }} items)</span>
+                    <nav class="inline-flex items-center gap-1">
+                        {% if pagination.page > 1 %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">First</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page - 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Prev</a>
+                        {% endif %}
+                        {% for p in max(1, pagination.page - 3)..min(pagination.total_pages, pagination.page + 3) %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': p})) }}" class="px-2.5 py-1 rounded border {{ p == pagination.page ? 'border-zinc-200 bg-zinc-100 text-zinc-950 font-semibold' : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300' }}">{{ p }}</a>
+                        {% endfor %}
+                        {% if pagination.page < pagination.total_pages %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page + 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Next</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.total_pages})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">Last</a>
+                        {% endif %}
+                    </nav>
+                </div>
             {% endif %}
         {% else %}
-            {# Empty State when no searches exist #}
-            <section class="rounded-2xl border border-slate-800 bg-slate-900/80 p-12 text-center space-y-4">
-                <div class="text-5xl">📡</div>
-                <h2 class="text-2xl font-extrabold text-white">Welcome to Listing Finder AI Radar</h2>
-                <p class="text-sm text-slate-400 max-w-lg mx-auto">
-                    Start a new search to automatically expand your product topic into marketplace keywords with Ollama, scrape real listings from LeBonCoin & Vinted, and evaluate every deal with AI.
+            <section class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-12 text-center space-y-4">
+                <h2 class="text-lg font-semibold text-zinc-100">Listing Finder Dashboard</h2>
+                <p class="text-xs text-zinc-400 max-w-md mx-auto">
+                    Create a search request to expand keywords via Ollama, fetch marketplace listings, and score deals strictly against your specifications.
                 </p>
-                <button
-                    type="button"
-                    onclick="document.getElementById('newSearchModal').classList.remove('hidden')"
-                    class="px-5 py-2.5 rounded-xl font-bold text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30"
-                >
-                    ＋ Launch First AI Search
+                <button type="button" onclick="document.getElementById('newSearchModal').classList.remove('hidden')" class="px-4 py-2 rounded-md text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950">
+                    New Search Request
                 </button>
             </section>
         {% endif %}
     </main>
 </div>
 
-{# ==================== NEW AI SEARCH MODAL ==================== #}
-<div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden">
-        <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-            <h3 class="text-base font-extrabold text-white flex items-center gap-2">
-                <span>📡 Launch New AI Deal Search</span>
-            </h3>
-            <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+{# ==================== NEW SEARCH MODAL ==================== #}
+<div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-lg rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden">
+        <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
+            <h3 class="text-sm font-semibold text-zinc-100">New Search Request</h3>
+            <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="text-zinc-400 hover:text-white text-xs font-mono">Close</button>
         </div>
 
-        <form method="post" action="{{ path('app_dashboard_search_new') }}" class="p-6 space-y-4 text-sm">
+        <form method="post" action="{{ path('app_dashboard_search_new') }}" class="p-5 space-y-4 text-xs">
             <input type="hidden" name="_token" value="{{ csrf_token('dashboard_new_search') }}">
 
             <div>
-                <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Product Topic / Specification *</label>
+                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Product Specification *</label>
                 <input
                     type="text"
                     name="topic"
                     required
                     placeholder="e.g. sfp+ with at least 4 switch rj45 1Gb"
-                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                    class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-zinc-500"
                 >
-                <p class="mt-1 text-[11px] text-slate-400">
-                    Ollama will expand this into 6–8 concrete brand/model and French marketplace search queries.
-                </p>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                    <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Target Price (EUR) *</label>
-                    <input
-                        type="number"
-                        name="target_price"
-                        step="0.5"
-                        min="1"
-                        value="50"
-                        required
-                        class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-white focus:outline-none focus:border-indigo-500"
-                    >
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Target Price (EUR) *</label>
+                    <input type="number" name="target_price" step="0.5" min="1" value="50" required class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
                 </div>
                 <div>
-                    <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Ads / Sub-Topic</label>
-                    <input
-                        type="number"
-                        name="limit"
-                        min="5"
-                        max="100"
-                        value="25"
-                        class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-white focus:outline-none focus:border-indigo-500"
-                    >
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Limit / Tag</label>
+                    <input type="number" name="limit" min="5" max="100" value="25" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
                 </div>
                 <div>
-                    <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Cron Interval (min)</label>
-                    <input
-                        type="number"
-                        name="interval"
-                        min="5"
-                        max="1440"
-                        value="30"
-                        class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 font-mono text-white focus:outline-none focus:border-indigo-500"
-                    >
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Cron (minutes)</label>
+                    <input type="number" name="interval" min="5" max="1440" value="30" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
                 </div>
             </div>
 
             <div>
-                <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Additional Buyer Requirements (Optional)</label>
-                <textarea
-                    name="user_requirements"
-                    rows="2"
-                    placeholder="e.g. Low power consumption, fanless preferred, rack ears included..."
-                    class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-                ></textarea>
+                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Additional Requirements</label>
+                <textarea name="user_requirements" rows="2" placeholder="Optional technical criteria..." class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-zinc-500"></textarea>
             </div>
 
             <div>
-                <label class="block text-xs font-mono uppercase text-slate-300 mb-1.5">Marketplace Providers</label>
-                <div class="flex flex-wrap gap-3">
+                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Providers</label>
+                <div class="flex flex-wrap gap-2">
                     {% for p in ['leboncoin', 'vinted', 'backmarket'] %}
-                        <label class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono uppercase cursor-pointer">
-                            <input type="checkbox" name="providers[]" value="{{ p }}" checked class="rounded text-indigo-600">
+                        <label class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-zinc-950 border border-zinc-800 font-mono uppercase text-[11px] cursor-pointer">
+                            <input type="checkbox" name="providers[]" value="{{ p }}" checked class="rounded">
                             <span>{{ p }}</span>
                         </label>
                     {% endfor %}
                 </div>
             </div>
 
-            <div class="pt-1">
-                <label class="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                    <input type="checkbox" name="enable_images" value="1" class="rounded text-indigo-600">
-                    <span>Enable Vision AI inspection on listing photos</span>
+            <div>
+                <label class="inline-flex items-center gap-2 text-zinc-300 cursor-pointer">
+                    <input type="checkbox" name="enable_images" value="1" class="rounded">
+                    <span>Enable Vision AI photo inspection</span>
                 </label>
             </div>
 
-            <div class="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
-                <button
-                    type="button"
-                    onclick="document.getElementById('newSearchModal').classList.add('hidden')"
-                    class="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                >
-                    Cancel
-                </button>
-                <button
-                    type="submit"
-                    class="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20"
-                >
-                    🚀 Expand with AI & Start Radar
-                </button>
+            <div class="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
+                <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="px-3.5 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300">Cancel</button>
+                <button type="submit" class="px-4 py-1.5 rounded-md font-medium bg-zinc-100 hover:bg-white text-zinc-950">Start Search</button>
             </div>
         </form>
     </div>
@@ -974,129 +796,107 @@
     {% if active_search and analytics %}
     <script>
         (function () {
-            Chart.defaults.color = '#94a3b8';
-            Chart.defaults.borderColor = 'rgba(30, 41, 59, 0.8)';
+            Chart.defaults.color = '#71717a';
+            Chart.defaults.borderColor = 'rgba(39, 39, 42, 0.8)';
             Chart.defaults.font.family = "'JetBrains Mono', monospace";
+            Chart.defaults.font.size = 10;
 
-            // 1. Category Doughnut Chart
+            // 1. 5-Tier Score Distribution Bar/Doughnut
+            let categoryChart = null;
             const catCtx = document.getElementById('categoryChart');
             if (catCtx) {
-                new Chart(catCtx, {
-                    type: 'doughnut',
+                categoryChart = new Chart(catCtx, {
+                    type: 'bar',
                     data: {
-                        labels: ['MUST BUY (90-100)', 'GOOD (70-89)', 'PASS (<70)'],
+                        labels: ['Must Buy', 'Ext. Good', 'Good', 'Bad', 'Poor'],
                         datasets: [{
+                            label: 'Listings',
                             data: [
                                 {{ analytics.must_buy_count }},
+                                {{ analytics.extremely_good_count }},
                                 {{ analytics.good_count }},
-                                {{ analytics.pass_count }}
+                                {{ analytics.bad_count }},
+                                {{ analytics.poor_count }}
                             ],
                             backgroundColor: [
-                                'rgba(16, 185, 129, 0.85)',
-                                'rgba(6, 182, 212, 0.85)',
-                                'rgba(245, 158, 11, 0.65)'
+                                '#10b981',
+                                '#38bdf8',
+                                '#a1a1aa',
+                                '#f59e0b',
+                                '#f43f5e'
                             ],
-                            borderColor: '#0f172a',
-                            borderWidth: 2
+                            borderRadius: 4
                         }]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        cutout: '65%',
-                        plugins: {
-                            legend: { position: 'bottom', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } }
-                        }
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true } }
                     }
                 });
             }
 
-            // 2. Provider Breakdown Chart
+            // 2. Provider Comparison Chart
+            let providerChart = null;
             const provCtx = document.getElementById('providerChart');
             if (provCtx) {
                 const providerStats = {{ analytics.provider_stats|json_encode|raw }};
-                new Chart(provCtx, {
+                providerChart = new Chart(provCtx, {
                     type: 'bar',
                     data: {
                         labels: providerStats.map(p => p.name),
                         datasets: [
                             {
-                                label: 'Stored Ads',
+                                label: 'Stored',
                                 data: providerStats.map(p => p.stored_count),
-                                backgroundColor: 'rgba(99, 102, 241, 0.6)',
-                                borderRadius: 6
+                                backgroundColor: '#52525b',
+                                borderRadius: 4
                             },
                             {
-                                label: 'Must Buy + Good',
-                                data: providerStats.map(p => p.must_buy_count + p.good_count),
-                                backgroundColor: 'rgba(16, 185, 129, 0.85)',
-                                borderRadius: 6
+                                label: 'Score >= 50',
+                                data: providerStats.map(p => p.must_buy_count + p.extremely_good_count + p.good_count),
+                                backgroundColor: '#10b981',
+                                borderRadius: 4
                             }
                         ]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        scales: {
-                            y: { beginAtZero: true }
-                        },
-                        plugins: {
-                            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
-                        }
+                        scales: { y: { beginAtZero: true } },
+                        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } } }
                     }
                 });
             }
 
             // 3. Score vs Price Scatter Plot
+            let scatterChart = null;
             const scatterCtx = document.getElementById('scatterChart');
             if (scatterCtx) {
                 const points = {{ analytics.scatter_points|json_encode|raw }};
-                new Chart(scatterCtx, {
+                scatterChart = new Chart(scatterCtx, {
                     type: 'scatter',
                     data: {
                         datasets: [
-                            {
-                                label: 'MUST BUY',
-                                data: points.filter(p => p.category === 'must_buy'),
-                                backgroundColor: 'rgba(16, 185, 129, 0.9)',
-                                pointRadius: 6
-                            },
-                            {
-                                label: 'GOOD',
-                                data: points.filter(p => p.category === 'good'),
-                                backgroundColor: 'rgba(6, 182, 212, 0.85)',
-                                pointRadius: 5
-                            },
-                            {
-                                label: 'PASS',
-                                data: points.filter(p => p.category === 'pass'),
-                                backgroundColor: 'rgba(245, 158, 11, 0.6)',
-                                pointRadius: 4
-                            }
+                            { label: 'Must Buy', data: points.filter(p => p.category === 'must_buy'), backgroundColor: '#10b981', pointRadius: 5 },
+                            { label: 'Ext. Good', data: points.filter(p => p.category === 'extremely_good'), backgroundColor: '#38bdf8', pointRadius: 4 },
+                            { label: 'Good', data: points.filter(p => p.category === 'good'), backgroundColor: '#a1a1aa', pointRadius: 3.5 },
+                            { label: 'Bad/Poor', data: points.filter(p => p.category === 'bad' || p.category === 'poor'), backgroundColor: 'rgba(244, 63, 94, 0.55)', pointRadius: 3 }
                         ]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
                         scales: {
-                            x: {
-                                title: { display: true, text: 'Price (EUR)', font: { size: 10 } },
-                                beginAtZero: true
-                            },
-                            y: {
-                                title: { display: true, text: 'AI Score (/100)', font: { size: 10 } },
-                                min: 0,
-                                max: 100
-                            }
+                            x: { title: { display: true, text: 'Price (EUR)' }, beginAtZero: true },
+                            y: { title: { display: true, text: 'Score (/100)' }, min: 0, max: 100 }
                         },
                         plugins: {
-                            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } },
+                            legend: { position: 'bottom', labels: { boxWidth: 8 } },
                             tooltip: {
                                 callbacks: {
-                                    label: function (ctx) {
-                                        const raw = ctx.raw;
-                                        return `[${raw.provider}] ${raw.title} — ${raw.x}€ (${raw.y}/100)`;
-                                    }
+                                    label: ctx => `[${ctx.raw.provider}] ${ctx.raw.title} - ${ctx.raw.x} EUR (${ctx.raw.y}/100)`
                                 }
                             }
                         }
@@ -1104,43 +904,126 @@
                 });
             }
 
-            // 4. Live Status Polling while evaluations are running
-            const searchId = {{ active_search.id }};
-            let currentEvaluated = {{ analytics.total_evaluated_ads }};
-            const totalAds = {{ analytics.total_stored_ads }};
-
-            if (currentEvaluated < totalAds) {
-                const pollInterval = setInterval(async () => {
-                    try {
-                        const res = await fetch(`/api/dashboard/status/${searchId}`);
-                        if (!res.ok) return;
-                        const data = await res.json();
-
-                        const evalEl = document.getElementById('liveEvaluatedAds');
-                        const totalEl = document.getElementById('liveTotalAds');
-                        const pctEl = document.getElementById('liveProgressPercent');
-                        const barEl = document.getElementById('liveProgressBar');
-                        const mustEl = document.getElementById('liveMustBuyCount');
-                        const goodEl = document.getElementById('liveGoodCount');
-                        const queueEl = document.getElementById('globalQueueCount');
-
-                        if (evalEl) evalEl.textContent = data.evaluated_ads;
-                        if (totalEl) totalEl.textContent = data.total_ads;
-                        if (pctEl) pctEl.textContent = data.progress_percent + '%';
-                        if (barEl) barEl.style.width = data.progress_percent + '%';
-                        if (mustEl) mustEl.textContent = data.must_buy_count;
-                        if (goodEl) goodEl.textContent = data.good_count;
-                        if (queueEl) queueEl.textContent = data.queued_messages;
-
-                        if (data.evaluated_ads >= data.total_ads && data.total_ads > 0) {
-                            clearInterval(pollInterval);
-                            window.location.reload();
-                        }
-                    } catch (e) {
-                        // ignore transient network errors
-                    }
-                }, 4000);
+            // 4. Live Cron Countdown Ticker (1-second precision)
+            let nextCronTimestamp = {{ analytics.cron ? ('"' ~ analytics.cron.next_run_iso ~ '"')|raw : 'null' }};
+            function updateCronCountdown() {
+                const el = document.getElementById('cronCountdown');
+                if (!el) return;
+                if (!nextCronTimestamp) {
+                    el.textContent = 'Paused';
+                    return;
+                }
+                const diffSec = Math.max(0, Math.floor((new Date(nextCronTimestamp).getTime() - Date.now()) / 1000));
+                if (diffSec === 0) {
+                    el.textContent = 'Due now';
+                    return;
+                }
+                const mins = Math.floor(diffSec / 60);
+                const secs = diffSec % 60;
+                el.textContent = `${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
             }
+            updateCronCountdown();
+            setInterval(updateCronCountdown, 1000);
+
+            // 5. Continuous Live Data Polling (KPIs, Queue, Cron, Charts)
+            const searchId = {{ active_search.id }};
+            let autoRefreshEnabled = true;
+            const toggleBtn = document.getElementById('toggleAutoRefreshBtn');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    autoRefreshEnabled = !autoRefreshEnabled;
+                    toggleBtn.textContent = autoRefreshEnabled ? 'Auto-refresh: ON' : 'Auto-refresh: OFF';
+                });
+            }
+
+            async function pollLiveStatus() {
+                if (!autoRefreshEnabled) return;
+                try {
+                    const res = await fetch(`/api/dashboard/status/${searchId}`, { cache: 'no-store' });
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    // Global Telemetry
+                    const setText = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+                    if (data.global) {
+                        setText('globalTotalAds', data.global.total_listings);
+                        setText('globalEvaluatedCount', data.global.total_evaluated);
+                        setText('globalQueueCount', data.global.queued_messages);
+                        setText('globalActiveCrons', `${data.global.active_crons} cron`);
+                        const qEl = document.getElementById('globalQueueCount');
+                        if (qEl) {
+                            qEl.className = 'text-sm font-semibold font-mono ' + (data.global.queued_messages > 0 ? 'text-amber-400' : 'text-emerald-400');
+                        }
+                    }
+
+                    // Search KPIs & Progress
+                    setText('liveEvaluatedAds', data.evaluated_ads);
+                    setText('liveTotalAds', data.total_ads);
+                    setText('liveProgressPercent', data.progress_percent + '%');
+                    const bar = document.getElementById('liveProgressBar');
+                    if (bar) bar.style.width = data.progress_percent + '%';
+
+                    setText('liveMustBuyCount', data.must_buy_count);
+                    setText('liveExtremelyGoodCount', data.extremely_good_count);
+                    setText('liveGoodCount', data.good_count);
+                    setText('liveBadCount', data.bad_count);
+                    setText('livePoorCount', data.poor_count);
+                    setText('liveAvgScore', data.avg_score);
+
+                    const statusBadge = document.getElementById('searchStatusBadge');
+                    if (statusBadge && data.status) {
+                        statusBadge.textContent = data.status.toUpperCase();
+                    }
+
+                    // Live Cron Metadata
+                    if (data.cron) {
+                        setText('cronStatusText', `Active (Every ${data.cron.interval_minutes}m)`);
+                        setText('cronLastRun', data.cron.last_run_at ? data.cron.last_run_at + ' UTC' : 'Never');
+                        setText('cronNextRun', data.cron.next_run_at + ' UTC');
+                        setText('cronRunCount', 'Runs: ' + data.cron.run_count);
+                        nextCronTimestamp = data.cron.next_run_iso;
+                    } else {
+                        setText('cronStatusText', 'Disabled');
+                        setText('cronNextRun', '—');
+                        setText('cronRunCount', '');
+                        nextCronTimestamp = null;
+                    }
+
+                    // Live Update Charts
+                    if (categoryChart) {
+                        categoryChart.data.datasets[0].data = [
+                            data.must_buy_count,
+                            data.extremely_good_count,
+                            data.good_count,
+                            data.bad_count,
+                            data.poor_count
+                        ];
+                        categoryChart.update('none');
+                    }
+
+                    if (providerChart && Array.isArray(data.provider_stats)) {
+                        providerChart.data.labels = data.provider_stats.map(p => p.name);
+                        providerChart.data.datasets[0].data = data.provider_stats.map(p => p.stored_count);
+                        providerChart.data.datasets[1].data = data.provider_stats.map(p => p.must_buy_count + p.extremely_good_count + p.good_count);
+                        providerChart.update('none');
+                    }
+
+                    if (scatterChart && Array.isArray(data.scatter_points)) {
+                        scatterChart.data.datasets[0].data = data.scatter_points.filter(p => p.category === 'must_buy');
+                        scatterChart.data.datasets[1].data = data.scatter_points.filter(p => p.category === 'extremely_good');
+                        scatterChart.data.datasets[2].data = data.scatter_points.filter(p => p.category === 'good');
+                        scatterChart.data.datasets[3].data = data.scatter_points.filter(p => p.category === 'bad' || p.category === 'poor');
+                        scatterChart.update('none');
+                    }
+
+                    const nowStr = new Date().toLocaleTimeString([], { hour12: false });
+                    setText('liveLastSync', nowStr);
+                } catch (e) {
+                    // ignore transient errors
+                }
+            }
+
+            setInterval(pollLiveStatus, 5000);
         })();
     </script>
     {% endif %}

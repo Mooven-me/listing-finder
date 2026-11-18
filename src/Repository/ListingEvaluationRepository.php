@@ -57,13 +57,58 @@ class ListingEvaluationRepository extends ServiceEntityRepository
     }
 
     /**
+     * @return array{items: list<ListingEvaluation>, total: int, page: int, per_page: int, total_pages: int}
+     */
+    public function findFilteredPaginatedForDashboard(SearchRequest $searchRequest, DashboardFilterDto $filter): array
+    {
+        $qb = $this->createFilteredQueryBuilder($searchRequest, $filter);
+
+        $countQb = clone $qb;
+        $total = (int) $countQb->select('COUNT(le.id)')->getQuery()->getSingleScalarResult();
+
+        $perPage = $filter->normalizedPerPage();
+        $totalPages = max(1, (int) ceil($total / $perPage));
+        $page = min($filter->normalizedPage(), $totalPages);
+        $offset = ($page - 1) * $perPage;
+
+        $qb->addSelect('l')
+            ->orderBy('le.scoreOutOf100', 'DESC')
+            ->addOrderBy('l.price', 'ASC')
+            ->setFirstResult($offset)
+            ->setMaxResults($perPage);
+
+        /** @var list<ListingEvaluation> $items */
+        $items = $qb->getQuery()->getResult();
+
+        return [
+            'items' => $items,
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+            'total_pages' => $totalPages,
+        ];
+    }
+
+    /**
      * @return list<ListingEvaluation>
      */
     public function findFilteredForDashboard(SearchRequest $searchRequest, DashboardFilterDto $filter): array
     {
+        $qb = $this->createFilteredQueryBuilder($searchRequest, $filter)
+            ->addSelect('l')
+            ->orderBy('le.scoreOutOf100', 'DESC')
+            ->addOrderBy('l.price', 'ASC');
+
+        /** @var list<ListingEvaluation> $results */
+        $results = $qb->getQuery()->getResult();
+
+        return $results;
+    }
+
+    private function createFilteredQueryBuilder(SearchRequest $searchRequest, DashboardFilterDto $filter): \Doctrine\ORM\QueryBuilder
+    {
         $qb = $this->createQueryBuilder('le')
             ->innerJoin('le.listing', 'l')
-            ->addSelect('l')
             ->andWhere('le.searchRequest = :searchRequest')
             ->setParameter('searchRequest', $searchRequest);
 
@@ -71,9 +116,14 @@ class ListingEvaluationRepository extends ServiceEntityRepository
         if (null !== $selectedCategory) {
             $qb->andWhere('le.category = :category')
                 ->setParameter('category', $selectedCategory->value);
-        } elseif (!$filter->showPass) {
+        } elseif (!$filter->showPoor) {
             $qb->andWhere('le.category IN (:defaultCategories)')
-                ->setParameter('defaultCategories', [DealCategory::MustBuy->value, DealCategory::Good->value]);
+                ->setParameter('defaultCategories', [
+                    DealCategory::MustBuy->value,
+                    DealCategory::ExtremelyGood->value,
+                    DealCategory::Good->value,
+                    DealCategory::Bad->value,
+                ]);
         }
 
         $provider = $filter->normalizedProvider();
@@ -103,12 +153,6 @@ class ListingEvaluationRepository extends ServiceEntityRepository
             $qb->andWhere('le.isWorking = true');
         }
 
-        $qb->orderBy('le.scoreOutOf100', 'DESC')
-            ->addOrderBy('l.price', 'ASC');
-
-        /** @var list<ListingEvaluation> $results */
-        $results = $qb->getQuery()->getResult();
-
-        return $results;
+        return $qb;
     }
 }
