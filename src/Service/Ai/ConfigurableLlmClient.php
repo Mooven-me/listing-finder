@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Service\Ai;
 
+use App\Dto\Ai\ListingEvaluationResultDto;
+use App\Dto\Ai\TopicExpansionResultDto;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\Serializer\Normalizer\AbstractObjectNormalizer;
 use Symfony\Component\Serializer\SerializerInterface;
@@ -40,10 +42,10 @@ final class ConfigurableLlmClient implements LlmClientInterface
         $activeModel = [] !== $base64Images ? $this->visionModel : $this->model;
         $rawContent = match (strtolower(trim($this->provider))) {
             'openai' => $this->callOpenAi($activeModel, $systemPrompt, $userPrompt, $base64Images),
-            default => $this->callOllama($activeModel, $systemPrompt, $userPrompt, $base64Images),
+            default => $this->callOllama($activeModel, $systemPrompt, $userPrompt, $dtoClass, $base64Images),
         };
 
-        $cleanJson = $this->extractJsonObject($rawContent);
+        $cleanJson = $this->normalizeJsonForDto($this->extractJsonObject($rawContent), $dtoClass);
 
         try {
             /** @var object $dto */
@@ -69,6 +71,7 @@ final class ConfigurableLlmClient implements LlmClientInterface
         string $model,
         string $systemPrompt,
         string $userPrompt,
+        string $dtoClass,
         array $base64Images,
     ): string {
         $userMessage = [
@@ -88,7 +91,7 @@ final class ConfigurableLlmClient implements LlmClientInterface
                 'json' => [
                     'model' => $model,
                     'stream' => false,
-                    'format' => 'json',
+                    'format' => $this->resolveOllamaFormat($dtoClass),
                     'messages' => [
                         [
                             'role' => 'system',
@@ -110,6 +113,83 @@ final class ConfigurableLlmClient implements LlmClientInterface
         }
 
         return $content;
+    }
+
+    /**
+     * @return string|array<string, mixed>
+     */
+    private function resolveOllamaFormat(string $dtoClass): string|array
+    {
+        if (TopicExpansionResultDto::class === $dtoClass) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'sub_topics' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                        'minItems' => 5,
+                        'maxItems' => 8,
+                    ],
+                ],
+                'required' => ['sub_topics'],
+            ];
+        }
+
+        if (ListingEvaluationResultDto::class === $dtoClass) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'score' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 100],
+                    'price_score' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 100],
+                    'working_condition_score' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 100],
+                    'product_age_score' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 100],
+                    'relevance_score' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 100],
+                    'is_working' => ['type' => 'boolean'],
+                    'estimated_age' => ['type' => 'string'],
+                    'reasoning' => ['type' => 'string'],
+                ],
+                'required' => [
+                    'score',
+                    'price_score',
+                    'working_condition_score',
+                    'product_age_score',
+                    'relevance_score',
+                    'is_working',
+                    'estimated_age',
+                    'reasoning',
+                ],
+            ];
+        }
+
+        return 'json';
+    }
+
+    private function normalizeJsonForDto(string $json, string $dtoClass): string
+    {
+        if (TopicExpansionResultDto::class !== $dtoClass) {
+            return $json;
+        }
+
+        try {
+            $decoded = json_decode($json, true, 512, \JSON_THROW_ON_ERROR);
+        } catch (\Throwable) {
+            return $json;
+        }
+
+        if (!\is_array($decoded) || !isset($decoded['sub_topics']) || !\is_array($decoded['sub_topics'])) {
+            return $json;
+        }
+
+        $flattened = [];
+        array_walk_recursive($decoded['sub_topics'], static function (mixed $item) use (&$flattened): void {
+            if (\is_string($item) && '' !== trim($item)) {
+                $flattened[] = trim($item);
+            }
+        });
+
+        $decoded['sub_topics'] = $flattened;
+
+        return (string) json_encode($decoded, \JSON_UNESCAPED_UNICODE);
     }
 
     /**

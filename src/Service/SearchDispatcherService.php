@@ -15,7 +15,7 @@ class SearchDispatcherService
     ) {
     }
 
-    public function dispatchSearchJobs(SearchRequest $searchRequest, int $limitPerSubTopic = 5): int
+    public function dispatchSearchJobs(SearchRequest $searchRequest, int $limitPerSubTopic = 25): int
     {
         $searchRequestId = $searchRequest->getId();
         if (null === $searchRequestId) {

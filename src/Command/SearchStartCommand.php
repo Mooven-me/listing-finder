@@ -42,7 +42,7 @@ class SearchStartCommand extends Command
             ->addOption('with-images', null, InputOption::VALUE_NONE, 'Enable AI image inspection for fetched listings')
             ->addOption('providers', null, InputOption::VALUE_REQUIRED, 'Comma-separated list of providers (leboncoin,vinted,backmarket,mock)')
             ->addOption('requirements', 'r', InputOption::VALUE_REQUIRED, 'Additional user requirements or preferences')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max listings fetched per sub-topic per provider', '5')
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max listings fetched per sub-topic per provider', '25')
             ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Recurring cron interval in minutes', '30');
     }
 
@@ -142,8 +142,9 @@ class SearchStartCommand extends Command
         $io->note([
             'The background worker automatically consumes both the 30-minute scheduler and async queue:',
             'php bin/console messenger:consume scheduler_default async --time-limit=60 -vv',
-            sprintf('View results: php bin/console app:search:results %d', $searchRequestId),
-            sprintf('Stop/remove cron task: php bin/console app:search:stop %d', $searchRequestId),
+            sprintf('View results (by category): php bin/console app:search:results %d --by-category', $searchRequestId),
+            sprintf('View results (by score):    php bin/console app:search:results %d --by-score', $searchRequestId),
+            sprintf('Stop/remove cron task:      php bin/console app:search:stop %d', $searchRequestId),
         ]);
 
         $io->success(sprintf(

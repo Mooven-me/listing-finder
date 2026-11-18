@@ -36,6 +36,9 @@ class SearchResultsCommand extends Command
         $this
             ->addArgument('search', InputArgument::OPTIONAL, 'SearchRequest ID or topic substring (defaults to latest search)')
             ->addOption('all', 'a', InputOption::VALUE_NONE, 'Also display PASS listings scoring below 70/100')
+            ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort mode: "category" (grouped into MUST BUY / GOOD / PASS) or "score" (single flat list sorted by score)', 'category')
+            ->addOption('by-category', 'c', InputOption::VALUE_NONE, 'Shortcut for --sort=category (group results by category)')
+            ->addOption('by-score', null, InputOption::VALUE_NONE, 'Shortcut for --sort=score (sort all results by score in a unified list)')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Output results as JSON');
     }
 
@@ -53,7 +56,36 @@ class SearchResultsCommand extends Command
             return Command::FAILURE;
         }
 
+        $sortMode = strtolower(trim((string) $input->getOption('sort')));
+        if ((bool) $input->getOption('by-score')) {
+            $sortMode = 'score';
+        } elseif ((bool) $input->getOption('by-category')) {
+            $sortMode = 'category';
+        }
+
+        if (!\in_array($sortMode, ['category', 'categories', 'score'], true)) {
+            $io->error(sprintf('Invalid --sort value "%s". Allowed values: "category", "score".', $sortMode));
+
+            return Command::INVALID;
+        }
+
+        $isSortByScore = 'score' === $sortMode;
+        $showAll = (bool) $input->getOption('all');
+
         $allEvaluations = $this->evaluationRepository->findForSearchRequest($searchRequest);
+
+        // Ensure evaluations are sorted by score DESC, then price ASC
+        usort(
+            $allEvaluations,
+            static function (ListingEvaluation $a, ListingEvaluation $b): int {
+                $scoreCmp = $b->getScoreOutOf100() <=> $a->getScoreOutOf100();
+                if (0 !== $scoreCmp) {
+                    return $scoreCmp;
+                }
+
+                return $a->getListing()->getPrice() <=> $b->getListing()->getPrice();
+            },
+        );
 
         $mustBuy = array_values(array_filter(
             $allEvaluations,
@@ -85,6 +117,7 @@ class SearchResultsCommand extends Command
                     'sub_topics' => $searchRequest->getGeneratedSubTopics(),
                     'providers' => $searchRequest->getEnabledProviders(),
                     'status' => $searchRequest->getStatus()->value,
+                    'sort_mode' => $isSortByScore ? 'score' : 'category',
                     'cron_active' => null !== $cronTask,
                     'cron_interval_minutes' => $cronTask?->getIntervalMinutes(),
                     'cron_next_run_at' => $cronTask?->getNextRunAt()->format(\DateTimeInterface::ATOM),
@@ -93,8 +126,13 @@ class SearchResultsCommand extends Command
                 'good' => array_map($this->normalizeEvaluation(...), $good),
             ];
 
-            if ((bool) $input->getOption('all')) {
+            if ($showAll) {
                 $payload['pass'] = array_map($this->normalizeEvaluation(...), $pass);
+            }
+
+            if ($isSortByScore) {
+                $flatList = $showAll ? $allEvaluations : array_merge($mustBuy, $good);
+                $payload['results_by_score'] = array_map($this->normalizeEvaluation(...), $flatList);
             }
 
             $output->writeln($this->serializer->serialize($payload, 'json', ['json_encode_options' => \JSON_PRETTY_PRINT | \JSON_UNESCAPED_SLASHES]));
@@ -109,6 +147,7 @@ class SearchResultsCommand extends Command
             ['Topic' => $searchRequest->getTopic()],
             ['Target Price' => sprintf('%.2f EUR', $searchRequest->getTargetPrice())],
             ['Status' => strtoupper($searchRequest->getStatus()->value)],
+            ['Sort Mode' => $isSortByScore ? 'BY SCORE (High -> Low)' : 'BY CATEGORY (MUST BUY / GOOD / PASS)'],
             ['Recurring Cron Task' => $cronSummary],
             ['Sub-Topics Searched' => implode(', ', $searchRequest->getGeneratedSubTopics())],
             ['Providers' => implode(', ', $searchRequest->getEnabledProviders())],
@@ -127,11 +166,19 @@ class SearchResultsCommand extends Command
             return Command::SUCCESS;
         }
 
-        $this->renderCategorySection($io, 'MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $mustBuy);
-        $this->renderCategorySection($io, 'GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $good);
+        if ($isSortByScore) {
+            $flatEvaluations = $showAll ? $allEvaluations : array_merge($mustBuy, $good);
+            $sectionLabel = $showAll
+                ? 'ALL EVALUATED ADS — SORTED BY SCORE (100 -> 0)'
+                : 'TOP DEALS (SCORE >= 70/100) — SORTED BY SCORE';
+            $this->renderCategorySection($io, $sectionLabel, $flatEvaluations, true);
+        } else {
+            $this->renderCategorySection($io, 'MUST BUY (Score 90-100 / 100 | 9.0-10.0 / 10)', $mustBuy, false);
+            $this->renderCategorySection($io, 'GOOD DEALS (Score 70-89 / 100 | 7.0-8.9 / 10)', $good, false);
 
-        if ((bool) $input->getOption('all')) {
-            $this->renderCategorySection($io, 'PASS / OTHER ADS (Score < 70 / 100 | < 7.0 / 10)', $pass);
+            if ($showAll) {
+                $this->renderCategorySection($io, 'PASS / OTHER ADS (Score < 70 / 100 | < 7.0 / 10)', $pass, false);
+            }
         }
 
         $io->success(sprintf(
@@ -147,8 +194,12 @@ class SearchResultsCommand extends Command
     /**
      * @param list<ListingEvaluation> $evaluations
      */
-    private function renderCategorySection(SymfonyStyle $io, string $sectionTitle, array $evaluations): void
-    {
+    private function renderCategorySection(
+        SymfonyStyle $io,
+        string $sectionTitle,
+        array $evaluations,
+        bool $includeCategoryColumn = false,
+    ): void {
         $io->section($sectionTitle);
 
         if ([] === $evaluations) {
@@ -161,46 +212,112 @@ class SearchResultsCommand extends Command
         foreach ($evaluations as $eval) {
             $listing = $eval->getListing();
             $workingLabel = match ($eval->isWorking()) {
-                true => 'Yes',
-                false => 'No',
-                null => 'Unknown',
+                true => '<fg=green>Yes</>',
+                false => '<fg=red;options=bold>No</>',
+                null => '<fg=yellow>Unknown</>',
             };
 
-            $rows[] = [
-                sprintf('%d/100 (%.1f/10)', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
-                strtoupper($listing->getProvider()),
-                mb_strimwidth($listing->getTitle(), 0, 46, '...'),
-                sprintf('%.2f %s', $listing->getPrice(), $listing->getCurrency()),
-                $workingLabel,
-                $eval->getEstimatedAge() ?? 'N/A',
-                $eval->isImageAnalyzed() ? 'Yes' : 'No',
-                sprintf(
-                    'P:%d W:%d A:%d R:%d',
-                    $eval->getPriceScore(),
-                    $eval->getWorkingConditionScore(),
-                    $eval->getProductAgeScore(),
-                    $eval->getRelevanceScore(),
-                ),
+            $scoreBadge = match ($eval->getCategory()) {
+                DealCategory::MustBuy => sprintf('<fg=green;options=bold>%d/100 (%.1f/10)</>', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
+                DealCategory::Good => sprintf('<fg=cyan;options=bold>%d/100 (%.1f/10)</>', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
+                DealCategory::Pass => sprintf('<fg=yellow>%d/100 (%.1f/10)</>', $eval->getScoreOutOf100(), $eval->getScoreOutOf10()),
+            };
+
+            $row = [
+                $scoreBadge,
             ];
+
+            if ($includeCategoryColumn) {
+                $row[] = match ($eval->getCategory()) {
+                    DealCategory::MustBuy => '<bg=green;fg=black;options=bold> MUST BUY </>',
+                    DealCategory::Good => '<bg=cyan;fg=black;options=bold> GOOD </>',
+                    DealCategory::Pass => '<bg=yellow;fg=black> PASS </>',
+                };
+            }
+
+            $row[] = strtoupper($listing->getProvider());
+            $row[] = mb_strimwidth($listing->getTitle(), 0, 46, '...');
+            $row[] = sprintf('<fg=green;options=bold>%.2f %s</>', $listing->getPrice(), $listing->getCurrency());
+            $row[] = $workingLabel;
+            $row[] = $eval->getEstimatedAge() ?? 'N/A';
+            $row[] = $eval->isImageAnalyzed() ? 'Yes' : 'No';
+            $row[] = sprintf(
+                'P:%d W:%d A:%d R:%d',
+                $eval->getPriceScore(),
+                $eval->getWorkingConditionScore(),
+                $eval->getProductAgeScore(),
+                $eval->getRelevanceScore(),
+            );
+
+            $rows[] = $row;
         }
 
-        $io->table(
-            ['Score', 'Provider', 'Title', 'Price', 'Works', 'Est. Age', 'Img AI', 'Sub-Scores'],
-            $rows,
-        );
+        $headers = ['Score'];
+        if ($includeCategoryColumn) {
+            $headers[] = 'Category';
+        }
+        $headers = array_merge($headers, ['Provider', 'Title', 'Price', 'Works', 'Est. Age', 'Img AI', 'Sub-Scores']);
 
-        foreach ($evaluations as $eval) {
+        $io->table($headers, $rows);
+
+        $io->writeln('<options=bold;fg=white>Detailed Listings & AI Analysis:</>');
+        $io->newLine();
+
+        foreach ($evaluations as $index => $eval) {
             $listing = $eval->getListing();
+            $categoryStyle = match ($eval->getCategory()) {
+                DealCategory::MustBuy => 'fg=black;bg=green;options=bold',
+                DealCategory::Good => 'fg=black;bg=cyan;options=bold',
+                DealCategory::Pass => 'fg=black;bg=yellow;options=bold',
+            };
+
+            $workingText = match ($eval->isWorking()) {
+                true => '<fg=green;options=bold>Yes (Functional)</>',
+                false => '<fg=red;options=bold>No (Defective / HS)</>',
+                null => '<fg=yellow>Unknown</>',
+            };
+
             $io->writeln(sprintf(
-                '  * [%d/100 | %s] %s (%.2f %s) - %s',
+                ' <%s> #%d | %s | %d/100 (%.1f/10) | %s </> <options=bold;fg=white>%s</> — <fg=green;options=bold>%.2f %s</>',
+                $categoryStyle,
+                $index + 1,
+                $eval->getCategory()->label(),
                 $eval->getScoreOutOf100(),
+                $eval->getScoreOutOf10(),
                 strtoupper($listing->getProvider()),
                 $listing->getTitle(),
                 $listing->getPrice(),
                 $listing->getCurrency(),
-                $listing->getUrl(),
             ));
-            $io->writeln(sprintf('    AI Analysis: %s', $eval->getAiReasoning()));
+
+            $io->definitionList(
+                ['URL' => sprintf('<fg=cyan;options=underscore>%s</>', $listing->getUrl())],
+                ['Price & State' => sprintf(
+                    '<fg=green;options=bold>%.2f %s</> (Target: %.2f EUR) | Condition: %s | Works: %s | Est. Age: %s',
+                    $listing->getPrice(),
+                    $listing->getCurrency(),
+                    $eval->getSearchRequest()->getTargetPrice(),
+                    $listing->getConditionState() ?? 'Unspecified',
+                    $workingText,
+                    $eval->getEstimatedAge() ?? 'N/A',
+                )],
+                ['Sub-Scores' => sprintf(
+                    'Price: <options=bold>%d</>/100 | Working: <options=bold>%d</>/100 | Age: <options=bold>%d</>/100 | Relevance: <options=bold>%d</>/100 (Search tag: "%s")',
+                    $eval->getPriceScore(),
+                    $eval->getWorkingConditionScore(),
+                    $eval->getProductAgeScore(),
+                    $eval->getRelevanceScore(),
+                    $listing->getSearchTopicUsed(),
+                )],
+            );
+
+            $io->block(
+                $eval->getAiReasoning(),
+                'AI ANALYSIS',
+                'fg=white;bg=blue',
+                '  ',
+                true,
+            );
         }
     }
 

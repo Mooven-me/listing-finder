@@ -16,7 +16,7 @@ class MockListingProvider implements ListingProviderInterface
     /**
      * @return list<FetchedListingDto>
      */
-    public function search(string $query, ?float $maxPrice = null, int $limit = 5): array
+    public function search(string $query, ?float $maxPrice = null, int $limit = 25): array
     {
         return $this->generateRealisticFixtures($this->getName(), $query, $maxPrice, $limit);
     }

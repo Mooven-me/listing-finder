@@ -79,8 +79,17 @@ class EvaluateListingHandler
 
             $listing->setIsComputed(true);
             $this->entityManager->persist($evaluation);
-            $searchRequest->setStatus(SearchStatus::Completed);
             $this->entityManager->flush();
+
+            $uncomputedCount = $this->listingRepository->count([
+                'searchRequest' => $searchRequest,
+                'isComputed' => false,
+            ]);
+
+            if (0 === $uncomputedCount) {
+                $searchRequest->setStatus(SearchStatus::Completed);
+                $this->entityManager->flush();
+            }
         } finally {
             $lock->release();
         }

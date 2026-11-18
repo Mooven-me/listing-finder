@@ -10,7 +10,7 @@ final readonly class FetchSubTopicListingsMessage
         public int $searchRequestId,
         public string $subTopic,
         public string $providerName,
-        public int $limit = 5,
+        public int $limit = 25,
     ) {
     }
 }

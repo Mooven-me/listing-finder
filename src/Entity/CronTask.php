@@ -43,7 +43,7 @@ class CronTask
     public function __construct(
         SearchRequest $searchRequest,
         int $intervalMinutes = 30,
-        int $limitPerSubTopic = 5,
+        int $limitPerSubTopic = 25,
         ?\DateTimeImmutable $now = null,
     ) {
         $currentTime = $now ?? new \DateTimeImmutable();
