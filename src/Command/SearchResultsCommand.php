@@ -70,6 +70,11 @@ class SearchResultsCommand extends Command
             static fn (ListingEvaluation $eval): bool => DealCategory::Pass === $eval->getCategory(),
         ));
 
+        $cronTask = $searchRequest->getCronTask();
+        $cronSummary = null !== $cronTask
+            ? sprintf('ACTIVE (Every %d min | Runs: %d | Next: %s)', $cronTask->getIntervalMinutes(), $cronTask->getRunCount(), $cronTask->getNextRunAt()->format('Y-m-d H:i:s'))
+            : 'DISABLED (Removed from cron_task table)';
+
         if ((bool) $input->getOption('json')) {
             $payload = [
                 'search_request' => [
@@ -80,6 +85,9 @@ class SearchResultsCommand extends Command
                     'sub_topics' => $searchRequest->getGeneratedSubTopics(),
                     'providers' => $searchRequest->getEnabledProviders(),
                     'status' => $searchRequest->getStatus()->value,
+                    'cron_active' => null !== $cronTask,
+                    'cron_interval_minutes' => $cronTask?->getIntervalMinutes(),
+                    'cron_next_run_at' => $cronTask?->getNextRunAt()->format(\DateTimeInterface::ATOM),
                 ],
                 'must_buy' => array_map($this->normalizeEvaluation(...), $mustBuy),
                 'good' => array_map($this->normalizeEvaluation(...), $good),
@@ -101,8 +109,10 @@ class SearchResultsCommand extends Command
             ['Topic' => $searchRequest->getTopic()],
             ['Target Price' => sprintf('%.2f EUR', $searchRequest->getTargetPrice())],
             ['Status' => strtoupper($searchRequest->getStatus()->value)],
+            ['Recurring Cron Task' => $cronSummary],
             ['Sub-Topics Searched' => implode(', ', $searchRequest->getGeneratedSubTopics())],
             ['Providers' => implode(', ', $searchRequest->getEnabledProviders())],
+            ['Total Stored Ads' => (string) count($searchRequest->getListings())],
             ['Total Evaluated Ads' => (string) count($allEvaluations)],
             ['MUST BUY Count (90-100 / 9-10)' => (string) count($mustBuy)],
             ['GOOD Count (70-89 / 7-8)' => (string) count($good)],
