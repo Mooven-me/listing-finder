@@ -15,26 +15,46 @@ final class TopicExpansionAgent
     ) {
     }
 
-    public function expandTopic(string $topic, ?string $userRequirements = null): TopicExpansionResultDto
-    {
+    public function expandTopic(
+        string $topic,
+        ?string $userRequirements = null,
+        ?int $requestedCount = null,
+    ): TopicExpansionResultDto {
         $normalizedTopic = trim($topic);
+        if (null !== $userRequirements && '' !== trim($userRequirements)) {
+            $normalizedTopic = trim($normalizedTopic."\n".trim($userRequirements));
+        }
+
         if ('' === $normalizedTopic) {
             return new TopicExpansionResultDto(['produit occasion']);
         }
 
-        $systemPrompt = <<<'PROMPT'
-You convert a buyer's hardware or product description into 6 to 8 short search queries for French second-hand marketplaces (LeBonCoin, Vinted) and refurbished stores (BackMarket).
+        $targetCount = null !== $requestedCount ? max(1, min(15, $requestedCount)) : null;
+        $maxTags = $targetCount ?? 10;
+
+        $countInstruction = null !== $targetCount
+            ? sprintf('Generate EXACTLY %d distinct search queries in "sub_topics".', $targetCount)
+            : 'Automatically decide the optimal number of distinct search queries (between 4 and 10) needed to thoroughly cover the buyer specification.';
+
+        $systemPrompt = <<<PROMPT
+You are a search query strategist for second-hand and refurbished marketplaces (LeBonCoin, Vinted, BackMarket).
+The buyer will provide a product specification — this can be an exact product model name, a category, or a full multi-sentence description of the features, specifications, and condition they want.
+Your job is to generate realistic, short marketplace search titles/scopes (2 to 4 words each) that real individual sellers and refurbishers actually write in their ad titles when selling an item that matches the buyer's specification.
+
 Rules:
-1. Half of the items in "sub_topics" MUST be short popular brand + model or brand + product queries (2 to 3 words max, e.g. "MikroTik CRS305", "MikroTik switch", "Ubiquiti EdgeSwitch", "TP-Link SFP+", "Netgear ProSafe", "Zyxel SFP+"). Avoid overly long sub-series names that sellers rarely write in full.
-2. The other half MUST be short French marketplace search queries (2 to 3 words) that include the product type (e.g. "switch sfp+", "switch 10gb", "switch gigabit sfp", "switch rj45 sfp").
-3. Every single item in "sub_topics" must be a standalone product search query (never output bare attribute fragments like "1 GbE" or "4 RJ45 ports" without the product noun).
-4. Respond ONLY with a valid JSON object: {"sub_topics": ["query 1", "query 2", ...]}
+1. {$countInstruction}
+2. If the buyer describes functional specifications or features without a specific model, include both:
+   - Popular real brand + model names that satisfy those exact specifications.
+   - Concise category + key feature search queries in French and English (since sellers on French marketplaces mix French and English terms).
+3. If the buyer asks for a specific product or model (e.g. a specific printer, camera, console, tool, garment, or device), generate variations of how sellers title that exact item (brand + model, model number alone with product noun, common abbreviations, French/English product category terms).
+4. Every single item in "sub_topics" MUST be a standalone, searchable product query (2 to 4 words). Never output conversational filler words ("with at least", "looking for") or bare attribute fragments without the product noun.
+5. Respond ONLY with a valid JSON object: {"sub_topics": ["query 1", "query 2", ...]}
 PROMPT;
 
         $userPrompt = sprintf(
-            "Buyer description: %s\nAdditional requirements: %s\nReturn JSON {\"sub_topics\": [...]}.",
+            "Buyer Product Specification:\n%s\n\n%s\nReturn JSON {\"sub_topics\": [...]}.",
             $normalizedTopic,
-            null !== $userRequirements && '' !== trim($userRequirements) ? trim($userRequirements) : 'None specified',
+            $countInstruction,
         );
 
         try {
@@ -44,7 +64,7 @@ PROMPT;
                 TopicExpansionResultDto::class,
             );
 
-            $tags = $this->normalizeTags($normalizedTopic, $result->subTopics, false);
+            $tags = $this->normalizeTags($normalizedTopic, $result->subTopics, false, $maxTags);
 
             return new TopicExpansionResultDto($tags);
         } catch (\Throwable $e) {
@@ -53,7 +73,7 @@ PROMPT;
                 'error' => $e->getMessage(),
             ]);
 
-            return new TopicExpansionResultDto($this->buildDeterministicSubTopics($normalizedTopic, $userRequirements));
+            return new TopicExpansionResultDto($this->buildDeterministicSubTopics($normalizedTopic, $maxTags));
         }
     }
 
@@ -62,8 +82,12 @@ PROMPT;
      *
      * @return list<string>
      */
-    private function normalizeTags(string $mainTopic, array $candidateTags, bool $prependMainTopic = true): array
-    {
+    private function normalizeTags(
+        string $mainTopic,
+        array $candidateTags,
+        bool $prependMainTopic = true,
+        int $maxTags = 10,
+    ): array {
         $seen = [];
         $normalized = [];
 
@@ -74,7 +98,7 @@ PROMPT;
             }
 
             $clean = trim((string) preg_replace('/\s+/', ' ', $candidate));
-            if ('' === $clean || mb_strlen($clean) < 3) {
+            if ('' === $clean || mb_strlen($clean) < 2) {
                 continue;
             }
 
@@ -86,32 +110,33 @@ PROMPT;
             $seen[$key] = true;
             $normalized[] = $clean;
 
-            if (\count($normalized) >= 8) {
+            if (\count($normalized) >= $maxTags) {
                 break;
             }
         }
 
-        return [] !== $normalized ? $normalized : [$mainTopic];
+        $fallbackTag = mb_strimwidth(trim((string) preg_replace('/\s+/', ' ', $mainTopic)), 0, 60, '');
+
+        return [] !== $normalized ? $normalized : [$fallbackTag];
     }
 
     /**
      * @return list<string>
      */
-    private function buildDeterministicSubTopics(string $topic, ?string $userRequirements): array
+    private function buildDeterministicSubTopics(string $topic, int $maxTags = 8): array
     {
         $stopWords = [
-            'with', 'without', 'least', 'most', 'more', 'less', 'than', 'from', 'that', 'this', 'have', 'having', 'for', 'and', 'the',
-            'avec', 'sans', 'moins', 'plus', 'dans', 'pour', 'une', 'des', 'les', 'aux', 'sur', 'chez', 'comme', 'tres', 'bon', 'etat',
+            'with', 'without', 'least', 'most', 'more', 'less', 'than', 'from', 'that', 'this', 'have', 'having', 'for', 'and', 'the', 'looking', 'want', 'need',
+            'avec', 'sans', 'moins', 'plus', 'dans', 'pour', 'une', 'des', 'les', 'aux', 'sur', 'chez', 'comme', 'tres', 'bon', 'etat', 'cherche',
         ];
 
         $words = array_values(array_filter(
             preg_split('/[\s,\-\/]+/', mb_strtolower($topic)) ?: [],
             static fn (string $word): bool => mb_strlen(trim($word)) >= 2
-                && !in_array(trim($word), $stopWords, true)
-                && !ctype_digit(trim($word)),
+                && !in_array(trim($word), $stopWords, true),
         ));
 
-        $coreQuery = [] !== $words ? implode(' ', \array_slice($words, 0, 4)) : $topic;
+        $coreQuery = [] !== $words ? implode(' ', \array_slice($words, 0, 4)) : trim($topic);
 
         $candidates = [
             $coreQuery,
@@ -122,20 +147,13 @@ PROMPT;
             $candidates[] = implode(' ', \array_slice($words, -2));
         }
 
+        if (\count($words) >= 3) {
+            $candidates[] = implode(' ', \array_slice($words, 0, 3));
+        }
+
         $candidates[] = sprintf('%s occasion', $coreQuery);
         $candidates[] = sprintf('%s reconditionne', $coreQuery);
 
-        if (null !== $userRequirements && '' !== trim($userRequirements)) {
-            $reqWords = array_values(array_filter(
-                preg_split('/[\s,\-\/]+/', mb_strtolower(trim($userRequirements))) ?: [],
-                static fn (string $word): bool => mb_strlen(trim($word)) >= 3 && !in_array(trim($word), $stopWords, true),
-            ));
-
-            if ([] !== $reqWords) {
-                $candidates[] = sprintf('%s %s', $coreQuery, $reqWords[0]);
-            }
-        }
-
-        return $this->normalizeTags($coreQuery, $candidates);
+        return $this->normalizeTags($coreQuery, $candidates, true, $maxTags);
     }
 }

@@ -164,12 +164,21 @@ class DashboardController extends AbstractController
             $providers = ['leboncoin', 'vinted', 'backmarket'];
         }
 
+        $rawSpecification = trim((string) $request->request->get('topic', ''));
+        $legacyRequirements = trim((string) $request->request->get('user_requirements', ''));
+        if ('' !== $legacyRequirements) {
+            $rawSpecification = trim($rawSpecification."\n".$legacyRequirements);
+        }
+
+        $rawSubTopicsCount = trim((string) $request->request->get('sub_topics_count', ''));
+        $subTopicsCount = '' !== $rawSubTopicsCount && is_numeric($rawSubTopicsCount)
+            ? max(1, min(15, (int) $rawSubTopicsCount))
+            : null;
+
         $dto = new NewSearchFormDto(
-            topic: trim((string) $request->request->get('topic', '')),
+            topic: $rawSpecification,
             targetPrice: (float) $request->request->get('target_price', 50),
-            userRequirements: '' !== trim((string) $request->request->get('user_requirements', ''))
-                ? trim((string) $request->request->get('user_requirements', ''))
-                : null,
+            subTopicsCount: $subTopicsCount,
             enableImages: (bool) $request->request->get('enable_images', false),
             limitPerSubTopic: max(1, min(100, (int) $request->request->get('limit', 25))),
             intervalMinutes: max(5, min(1440, (int) $request->request->get('interval', 30))),
@@ -193,18 +202,23 @@ class DashboardController extends AbstractController
 
         $providerNames = array_map(static fn ($p): string => $p->getName(), $resolvedProviders);
 
+        // Keep SearchRequest::topic within 255 chars and store full multi-line details in userRequirements if longer
+        $normalizedOneLine = trim((string) preg_replace('/\s+/', ' ', $dto->topic));
+        $shortTopic = mb_substr($normalizedOneLine, 0, 250);
+        $extraDetails = mb_strlen($dto->topic) > 250 || str_contains($dto->topic, "\n") ? $dto->topic : null;
+
         $searchRequest = new SearchRequest(
-            topic: $dto->topic,
+            topic: $shortTopic,
             targetPrice: $dto->targetPrice,
             enableImages: $dto->enableImages,
-            userRequirements: $dto->userRequirements,
+            userRequirements: $extraDetails,
             enabledProviders: $providerNames,
         );
         $searchRequest->setStatus(SearchStatus::Expanding);
         $this->entityManager->persist($searchRequest);
         $this->entityManager->flush();
 
-        $expansion = $this->topicExpansionAgent->expandTopic($dto->topic, $dto->userRequirements);
+        $expansion = $this->topicExpansionAgent->expandTopic($dto->topic, null, $dto->subTopicsCount);
         $searchRequest->setGeneratedSubTopics($expansion->subTopics);
         $searchRequest->setStatus(SearchStatus::Processing);
 

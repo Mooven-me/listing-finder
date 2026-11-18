@@ -49,12 +49,12 @@ final class SearchPipelineTest extends KernelTestCase
         $mockHttp = new MockHttpClient([
             new MockResponse((string) json_encode([
                 'message' => [
-                    'content' => "```json\n{\"sub_topics\": [\"switch sfp+\", \"sfp+ 10gb\", \"mikrotik crs305\"]}\n```",
+                    'content' => "```json\n{\"sub_topics\": [\"canon printer ax380\", \"imprimante canon ax380\", \"canon pixma ax380\"]}\n```",
                 ],
             ])),
             new MockResponse((string) json_encode([
                 'message' => [
-                    'content' => '{"score": 94, "price_score": 96, "working_condition_score": 95, "product_age_score": 90, "relevance_score": 95, "is_working": true, "estimated_age": "1 year", "reasoning": "Outstanding SFP+ switch deal well below target price."}',
+                    'content' => '{"score": 94, "price_score": 96, "working_condition_score": 95, "product_age_score": 90, "relevance_score": 95, "is_working": true, "estimated_age": "1 year", "reasoning": "Outstanding Canon printer deal well below target price."}',
                 ],
             ])),
         ]);
@@ -72,7 +72,7 @@ final class SearchPipelineTest extends KernelTestCase
         );
 
         $expansion = $client->generateStructured('system', 'user', TopicExpansionResultDto::class);
-        self::assertSame(['switch sfp+', 'sfp+ 10gb', 'mikrotik crs305'], $expansion->subTopics);
+        self::assertSame(['canon printer ax380', 'imprimante canon ax380', 'canon pixma ax380'], $expansion->subTopics);
 
         $evaluation = $client->generateStructured('system', 'user', ListingEvaluationResultDto::class, [base64_encode('fake-img')]);
         self::assertSame(94, $evaluation->score);
@@ -88,7 +88,7 @@ final class SearchPipelineTest extends KernelTestCase
         $startCommand = $application->find('app:search:start');
         $startTester = new CommandTester($startCommand);
         $exitCode = $startTester->execute([
-            'topic' => 'sfp+ switch',
+            'topic' => 'canon printer ax380',
             '--price' => '120',
             '--with-images' => true,
             '--providers' => 'mock',
@@ -110,7 +110,7 @@ final class SearchPipelineTest extends KernelTestCase
         /** @var InMemoryTransport $asyncTransport */
         $asyncTransport = $container->get('messenger.transport.async');
 
-        $searchRequest = $searchRepo->findByIdentifierOrLatest('sfp+ switch');
+        $searchRequest = $searchRepo->findByIdentifierOrLatest('canon printer ax380');
         self::assertNotNull($searchRequest);
         self::assertNotNull($searchRequest->getCronTask());
         self::assertSame(30, $searchRequest->getCronTask()->getIntervalMinutes());
@@ -166,7 +166,7 @@ final class SearchPipelineTest extends KernelTestCase
         // Stop/remove the cron task for this topic
         $stopCommand = $application->find('app:search:stop');
         $stopTester = new CommandTester($stopCommand);
-        self::assertSame(0, $stopTester->execute(['search' => 'sfp+ switch']));
+        self::assertSame(0, $stopTester->execute(['search' => 'canon printer ax380']));
         self::assertStringContainsString('Disabled and removed CronTask', $stopTester->getDisplay());
         self::assertCount(0, $cronRepo->findAll());
 
@@ -177,7 +177,7 @@ final class SearchPipelineTest extends KernelTestCase
         // Results remain available via app:search:results
         $resultsCommand = $application->find('app:search:results');
         $resultsTester = new CommandTester($resultsCommand);
-        self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch']));
+        self::assertSame(0, $resultsTester->execute(['search' => 'canon printer ax380']));
         $output = $resultsTester->getDisplay();
         self::assertStringContainsString('MUST BUY (Score 90-100)', $output);
         self::assertStringContainsString('EXTREMELY GOOD (Score 70-89)', $output);
@@ -186,13 +186,13 @@ final class SearchPipelineTest extends KernelTestCase
         self::assertStringContainsString('[AI ANALYSIS]', $output);
 
         // Results sorted by score (--by-score)
-        self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch', '--by-score' => true]));
+        self::assertSame(0, $resultsTester->execute(['search' => 'canon printer ax380', '--by-score' => true]));
         $scoreOutput = $resultsTester->getDisplay();
         self::assertStringContainsString('RECOMMENDED DEALS (SCORE >= 50/100) — SORTED BY SCORE', $scoreOutput);
         self::assertStringContainsString('BY SCORE (High -> Low)', $scoreOutput);
 
         // Results filtered by a single category argument (must_buy)
-        self::assertSame(0, $resultsTester->execute(['search' => 'sfp+ switch', 'category' => 'must_buy']));
+        self::assertSame(0, $resultsTester->execute(['search' => 'canon printer ax380', 'category' => 'must_buy']));
         $onlyMustBuyOutput = $resultsTester->getDisplay();
         self::assertStringContainsString('MUST BUY (Score 90-100)', $onlyMustBuyOutput);
         self::assertStringNotContainsString('EXTREMELY GOOD (Score 70-89)', $onlyMustBuyOutput);

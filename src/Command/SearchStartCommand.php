@@ -37,11 +37,12 @@ class SearchStartCommand extends Command
     protected function configure(): void
     {
         $this
-            ->addArgument('topic', InputArgument::REQUIRED, 'Main product topic or theme to search (e.g. "sfp+ switch")')
+            ->addArgument('topic', InputArgument::REQUIRED, 'Product specification, model name, or detailed description of what you want')
             ->addOption('price', 'p', InputOption::VALUE_REQUIRED, 'Target price in EUR', '100')
+            ->addOption('sub-topics', 's', InputOption::VALUE_REQUIRED, 'Number of AI search queries/titles to generate (1-15, or omit for Auto)')
             ->addOption('with-images', null, InputOption::VALUE_NONE, 'Enable AI image inspection for fetched listings')
             ->addOption('providers', null, InputOption::VALUE_REQUIRED, 'Comma-separated list of providers (leboncoin,vinted,backmarket,mock)')
-            ->addOption('requirements', 'r', InputOption::VALUE_REQUIRED, 'Additional user requirements or preferences')
+            ->addOption('requirements', 'r', InputOption::VALUE_REQUIRED, 'Additional user requirements (merged into specification)')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max listings fetched per sub-topic per provider', '25')
             ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Recurring cron interval in minutes', '30');
     }
@@ -67,6 +68,10 @@ class SearchStartCommand extends Command
         $enableImages = (bool) $input->getOption('with-images');
         $requirementsOption = $input->getOption('requirements');
         $requirements = is_string($requirementsOption) && '' !== trim($requirementsOption) ? trim($requirementsOption) : null;
+        $subTopicsOption = $input->getOption('sub-topics');
+        $requestedSubTopicsCount = is_string($subTopicsOption) && '' !== trim($subTopicsOption) && is_numeric(trim($subTopicsOption))
+            ? max(1, min(15, (int) trim($subTopicsOption)))
+            : null;
         $limit = max(1, (int) $input->getOption('limit'));
         $intervalMinutes = max(1, (int) $input->getOption('interval'));
 
@@ -103,7 +108,7 @@ class SearchStartCommand extends Command
         $io->section('Step 1: Expanding Topic via AI Sub-Process');
         $io->text(sprintf('Analyzing topic "%s" to generate marketplace search tags...', $topic));
 
-        $expansionResult = $this->topicExpansionAgent->expandTopic($topic, $requirements);
+        $expansionResult = $this->topicExpansionAgent->expandTopic($topic, $requirements, $requestedSubTopicsCount);
         $subTopics = $expansionResult->subTopics;
 
         $searchRequest->setGeneratedSubTopics($subTopics);

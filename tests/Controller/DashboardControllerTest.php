@@ -31,13 +31,13 @@ final class DashboardControllerTest extends WebTestCase
         $connection->executeStatement('DELETE FROM search_request');
 
         $searchRequest = new SearchRequest(
-            topic: 'sfp+ switch test',
+            topic: 'canon printer ax380 test',
             targetPrice: 50.0,
             enableImages: false,
-            userRequirements: 'Fanless preferred',
+            userRequirements: 'Power cable included',
             enabledProviders: ['leboncoin', 'vinted'],
         );
-        $searchRequest->setGeneratedSubTopics(['MikroTik CRS305', 'switch sfp+']);
+        $searchRequest->setGeneratedSubTopics(['Canon AX380', 'imprimante canon ax380']);
         $searchRequest->setStatus(SearchStatus::Completed);
 
         $cronTask = new CronTask($searchRequest, 30, 25);
@@ -47,11 +47,11 @@ final class DashboardControllerTest extends WebTestCase
             searchRequest: $searchRequest,
             provider: 'leboncoin',
             externalId: 'lbc-101',
-            searchTopicUsed: 'MikroTik CRS305',
-            title: 'MikroTik CRS305-1G-4S+IN Parfait Etat',
+            searchTopicUsed: 'Canon AX380',
+            title: 'Canon Printer AX380 Parfait Etat',
             price: 35.0,
-            url: 'https://www.leboncoin.fr/ad/accessoires_informatique/101',
-            description: 'Switch 10Gb SFP+ complet en boite',
+            url: 'https://www.leboncoin.fr/ad/informatique/101',
+            description: 'Imprimante Wi-Fi complet en boite',
             currency: 'EUR',
             imageUrls: ['https://placehold.co/300x300'],
             conditionState: 'Très bon état',
@@ -66,7 +66,7 @@ final class DashboardControllerTest extends WebTestCase
             workingConditionScore: 95,
             productAgeScore: 90,
             relevanceScore: 96,
-            aiReasoning: 'Excellent MikroTik SFP+ deal 30% below target price.',
+            aiReasoning: 'Excellent Canon AX380 printer deal 30% below target price.',
             imageAnalyzed: false,
             isWorking: true,
             estimatedAge: '1-2 years',
@@ -76,8 +76,8 @@ final class DashboardControllerTest extends WebTestCase
             searchRequest: $searchRequest,
             provider: 'vinted',
             externalId: 'vnt-202',
-            searchTopicUsed: 'switch sfp+',
-            title: 'Netgear ProSafe GS108T Gigabit Switch',
+            searchTopicUsed: 'imprimante canon ax380',
+            title: 'Canon Pixma AX380 Wi-Fi Printer',
             price: 45.0,
             url: 'https://www.vinted.fr/items/202',
             description: 'Bon etat general',
@@ -95,7 +95,7 @@ final class DashboardControllerTest extends WebTestCase
             workingConditionScore: 85,
             productAgeScore: 75,
             relevanceScore: 80,
-            aiReasoning: 'Solid gigabit switch under target budget.',
+            aiReasoning: 'Solid printer under target budget.',
             imageAnalyzed: false,
             isWorking: true,
             estimatedAge: '2-3 years',
@@ -114,18 +114,18 @@ final class DashboardControllerTest extends WebTestCase
         // 1. Default dashboard view (By Category)
         $client->request('GET', '/?search='.$searchId);
         self::assertResponseIsSuccessful();
-        self::assertSelectorTextContains('h2', 'sfp+ switch test');
+        self::assertSelectorTextContains('h2', 'canon printer ax380 test');
         $content = (string) $client->getResponse()->getContent();
-        self::assertStringContainsString('MikroTik CRS305-1G-4S+IN Parfait Etat', $content);
-        self::assertStringContainsString('Netgear ProSafe GS108T Gigabit Switch', $content);
-        self::assertStringContainsString('Excellent MikroTik SFP+ deal 30% below target price.', $content);
+        self::assertStringContainsString('Canon Printer AX380 Parfait Etat', $content);
+        self::assertStringContainsString('Canon Pixma AX380 Wi-Fi Printer', $content);
+        self::assertStringContainsString('Excellent Canon AX380 printer deal 30% below target price.', $content);
 
         // 2. Filter by single category (must_buy)
         $client->request('GET', sprintf('/?search=%d&category=must_buy', $searchId));
         self::assertResponseIsSuccessful();
         $mustBuyContent = (string) $client->getResponse()->getContent();
-        self::assertStringContainsString('MikroTik CRS305-1G-4S+IN Parfait Etat', $mustBuyContent);
-        self::assertStringNotContainsString('Netgear ProSafe GS108T Gigabit Switch', $mustBuyContent);
+        self::assertStringContainsString('Canon Printer AX380 Parfait Etat', $mustBuyContent);
+        self::assertStringNotContainsString('Canon Pixma AX380 Wi-Fi Printer', $mustBuyContent);
 
         // 3. Sort by score + compact table view + pagination
         $client->request('GET', sprintf('/?search=%d&sort=score&view=table&perPage=10&page=1', $searchId));

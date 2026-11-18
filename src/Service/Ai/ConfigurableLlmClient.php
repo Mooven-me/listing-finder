@@ -127,8 +127,8 @@ final class ConfigurableLlmClient implements LlmClientInterface
                     'sub_topics' => [
                         'type' => 'array',
                         'items' => ['type' => 'string'],
-                        'minItems' => 5,
-                        'maxItems' => 8,
+                        'minItems' => 1,
+                        'maxItems' => 15,
                     ],
                 ],
                 'required' => ['sub_topics'],

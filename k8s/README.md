@@ -37,7 +37,7 @@ kubectl -n listing-finder rollout status deployment/listing-finder-worker
 
 ```bash
 kubectl -n listing-finder exec -it deploy/listing-finder-web -- php bin/console app:search:results
-kubectl -n listing-finder exec -it deploy/listing-finder-web -- php bin/console app:search:start --price=50 "sfp+ switch"
+kubectl -n listing-finder exec -it deploy/listing-finder-web -- php bin/console app:search:start --price=50 "canon printer ax380"
 ```
 
 ## 6. Stop Docker Compose Production Containers (to avoid port conflicts)

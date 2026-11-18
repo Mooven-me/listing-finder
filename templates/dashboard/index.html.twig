@@ -724,7 +724,7 @@
 
 {# ==================== NEW SEARCH MODAL ==================== #}
 <div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="w-full max-w-lg rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden">
+    <div class="w-full max-w-xl rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden">
         <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
             <h3 class="text-sm font-semibold text-zinc-100">New Search Request</h3>
             <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="text-zinc-400 hover:text-white text-xs font-mono">Close</button>
@@ -734,34 +734,36 @@
             <input type="hidden" name="_token" value="{{ csrf_token('dashboard_new_search') }}">
 
             <div>
-                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Product Specification *</label>
-                <input
-                    type="text"
+                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Product Specification & Requirements *</label>
+                <textarea
                     name="topic"
+                    rows="5"
                     required
-                    placeholder="e.g. sfp+ with at least 4 switch rj45 1Gb"
-                    class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-zinc-500"
-                >
+                    placeholder="Describe precisely what you are looking for, or enter an exact product/model name (e.g. Canon printer AX380 in working condition with power cable, or describe desired technical specifications, features, capacity, and condition)..."
+                    class="w-full px-3 py-2.5 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-100 leading-relaxed focus:outline-none focus:border-zinc-500"
+                ></textarea>
+                <p class="mt-1 text-[11px] text-zinc-500">
+                    Write your full product description and requirements in a single place. The AI will generate multiple search titles/scopes to match how different sellers list this item.
+                </p>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                     <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Target Price (EUR) *</label>
                     <input type="number" name="target_price" step="0.5" min="1" value="50" required class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
                 </div>
                 <div>
-                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Limit / Tag</label>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">AI Searches Count</label>
+                    <input type="number" name="sub_topics_count" min="1" max="15" placeholder="Auto (AI)" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Limit / Search</label>
                     <input type="number" name="limit" min="5" max="100" value="25" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
                 </div>
                 <div>
                     <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Cron (minutes)</label>
                     <input type="number" name="interval" min="5" max="1440" value="30" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
                 </div>
-            </div>
-
-            <div>
-                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Additional Requirements</label>
-                <textarea name="user_requirements" rows="2" placeholder="Optional technical criteria..." class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-100 focus:outline-none focus:border-zinc-500"></textarea>
             </div>
 
             <div>

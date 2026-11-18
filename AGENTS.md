@@ -1,8 +1,64 @@
 # AGENTS.md
 
-This is a Symfony project. Check `composer.json` for the exact Symfony/PHP version
+This is a Symfony project (**Listing Finder**). Check `composer.json` for the exact Symfony/PHP version
 in use, and read `symfony.lock` to see which recipes ran. Don't assume Doctrine,
 Twig, API Platform, Messenger, or Lock are installed unless one of those says so.
+
+## Application Architecture & Domain Guide
+
+**Listing Finder** is a domain-agnostic AI second-hand deal radar built on **Symfony 8.1**, **PHP 8.5**, **FrankenPHP**, **Doctrine ORM (PostgreSQL 16)**, **Symfony Messenger & Scheduler**, **Symfony Lock**, and **Twig + Chart.js**.
+
+### 1. Purpose & Domain-Agnostic Rule
+- Users search for **any product in the world** by entering a unified **Product Specification** (either a specific product/model name like `"canon printer ax380"` or a multi-sentence description of desired technical specs, features, and condition) along with a **Target Price (EUR)**.
+- **NEVER hardcode product-specific or category-specific keywords/regexes** (such as specific electronics, networking switches, etc.) into the AI prompts or evaluation guardrails. All prompts and heuristics must remain 100% universal across all product categories.
+
+### 2. Core Entities (`src/Entity/`)
+- `SearchRequest`: Stores the user's product specification (`topic` and optional overflow/details in `userRequirements`), `targetPrice`, `enableImages`, AI-generated `generatedSubTopics` (JSON list of search queries/titles), `enabledProviders` (JSON list), `status` (`SearchStatus`: `pending`, `expanding`, `processing`, `completed`, `failed`), and a 1-to-1 relation to `CronTask`.
+- `Listing`: A marketplace ad linked to a `SearchRequest`. Deduplicated by unique constraint `(search_request_id, provider, external_id)`. Tracks `searchTopicUsed`, `title`, `description`, `price`, `currency`, `url`, `imageUrls`, `conditionState`, `publishedAt`, and `isComputed` (whether AI evaluation has completed).
+- `ListingEvaluation`: AI appraisal for a `(SearchRequest, Listing)` pair. Stores `scoreOutOf100` (`0–100`), `category` (`DealCategory`), 4 sub-scores (`priceScore`, `workingConditionScore`, `productAgeScore`, `relevanceScore`), `isWorking`, `estimatedAge`, `aiReasoning`, and `imageAnalyzed`.
+- `CronTask`: Recurring schedule metadata for a `SearchRequest` (`intervalMinutes`, `limitPerSubTopic`, `lastRunAt`, `nextRunAt`, `runCount`).
+
+### 3. 5-Tier Deal Classification (`App\Enum\DealCategory`)
+- `MustBuy` (`must_buy`): **90–100** — Rare, exact product & specification match, functional, and priced at or below target budget.
+- `ExtremelyGood` (`extremely_good`): **70–89** — Matches all key specifications, functional, fair price around or below target.
+- `Good` (`good`): **50–69** — Matches main product and most specs, acceptable price or minor wear.
+- `Bad` (`bad`): **30–49** — Overpriced relative to target, missing secondary features, or worn condition.
+- `Poor` (`poor`): **0–29** — Wrong product type / accessory only (`0–10`), defective/HS (`0–15`), or missing mandatory specifications from the user's request (`10–29`).
+
+### 4. AI Pipeline (`src/Service/Ai/`)
+- `ConfigurableLlmClient` (`LlmClientInterface`): Communicates with **Ollama** (`/api/chat` with strict JSON Schema `format`) or **OpenAI-compatible** (`/v1/chat/completions`) endpoints, deserializes responses into validated `readonly` DTOs (`TopicExpansionResultDto`, `ListingEvaluationResultDto`).
+- `TopicExpansionAgent`: Takes the user's unified Product Specification and an optional `requestedCount` (`1..15`, or `null` for `Auto` where the AI picks `4..10` queries) and generates short marketplace search titles/scopes (seller synonyms, French & English phrasings, and matching product models).
+- `ListingEvaluatorAgent`: Evaluates a `Listing` against the `SearchRequest` specification using semantic and technical equivalence, followed by universal post-LLM guardrails (`enforceStrictCalibration`) enforcing working-condition caps, relevance floors, price-to-target ratios, and weighted composite ceilings.
+
+### 5. Marketplace Providers (`src/Service/Provider/`)
+- `ListingProviderInterface` & `AbstractHttpListingProvider` (tagged `app.listing_provider` and resolved by `ListingProviderRegistry`).
+- `LeBonCoinProvider`: Parses LeBonCoin's SSR Next.js `<script id="__NEXT_DATA__">` JSON payload from `https://www.leboncoin.fr/recherche`.
+- `VintedProvider`: Parses Vinted's SSR catalog HTML (`https://www.vinted.fr/catalog`) with fallback to API v2.
+- `BackMarketProvider`: Parses JSON-LD product items from `https://www.backmarket.fr/fr-fr/search`.
+- `MockListingProvider`: Deterministic fixture generator for tests (`LISTING_PROVIDER_FALLBACK_TO_MOCK=false` in production).
+
+### 6. Async Messenger & Scheduler Flow (`src/Message/`, `src/MessageHandler/`, `src/Schedule.php`)
+- `SearchDispatcherService` dispatches one `FetchSubTopicListingsMessage` per `(subTopic, provider)`.
+- `FetchSubTopicListingsHandler` queries the provider, acquires a `LockFactory` lock per ad, upserts new `Listing` rows, and dispatches `EvaluateListingMessage` only for uncomputed listings (`isComputed = false`).
+- `EvaluateListingHandler` runs `ListingEvaluatorAgent::evaluate()`, persists `ListingEvaluation`, marks `Listing::isComputed = true`, and marks `SearchRequest` as `Completed` once all stored listings are evaluated.
+- `Schedule.php` dispatches `RunDueCronTasksMessage` every 60 seconds on transport `scheduler_default`; `RunDueCronTasksHandler` checks `CronTaskRepository::findDueTasks()` and dispatches incremental searches.
+
+### 7. Web Dashboard & CLI (`src/Controller/DashboardController.php`, `src/Command/`)
+- **Web Dashboard**:
+  - `GET /` (`app_dashboard`): Bound via `#[MapQueryString] DashboardFilterDto`. Renders 5-tier KPIs, live cron countdown, 3 Chart.js charts, telemetry matrix, filter/sort toolbar (`category` vs `score`, tier filter, provider filter, sub-topic filter, keyword search, max price, working only, cards vs table view), and server-side pagination. Always keep the UI clean, dark-neutral (`zinc`), and completely free of emojis.
+  - `GET /api/dashboard/status/{id}`: Real-time JSON telemetry endpoint polled every 5 seconds to update global stats, tier counts, cron countdown, and Chart.js datasets live.
+  - `POST /search/new`, `/search/{id}/refresh`, `/search/{id}/reevaluate`, `/search/{id}/cron-toggle`, `/search/{id}/delete`.
+- **CLI Commands**:
+  - `app:search:start`: Expands specification, creates `SearchRequest` + `CronTask`, dispatches jobs.
+  - `app:search:results`: Displays results in CLI (`--by-category`, `--by-score`, positional `category` filter, `--all`, `--json`).
+  - `app:cron:run` & `app:search:stop`.
+
+### 8. Deployment Topologies
+- **Development (`compose.yaml` + `compose.override.yaml`)**: Runs `php` (FrankenPHP dev), `worker`, and local `database` (PostgreSQL 16).
+- **Production Docker Compose (`compose.yaml` + `compose.prod.yaml`)**: Runs `php` and `worker` using `.env.prod` and an external shared PostgreSQL database (no local database container).
+- **Production Kubernetes (`k8s/`)**: Kustomize manifests for **k3s + Traefik** in namespace `listing-finder` (`deployment-web.yaml`, `deployment-worker.yaml`, `service.yaml`, `ingress.yaml`, `configmap.yaml`, `secret.example.yaml`). Connects to in-cluster PostgreSQL (`postgres-postgresql.postgres.svc.cluster.local:5432/listing_finder`) and host Ollama (`http://moovenserver:11434`).
+
+---
 
 ## Ask before generating
 
