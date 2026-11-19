@@ -172,6 +172,11 @@
                                 {{ active_search.status.value|upper }}
                             </span>
                             <span class="text-zinc-500">Created {{ active_search.createdAt|date('Y-m-d H:i') }} UTC</span>
+                            {% if active_search.cronTask %}
+                                <span class="px-2 py-0.5 rounded bg-zinc-950 text-zinc-300 border border-zinc-800">
+                                    Depth: {{ active_search.cronTask.limitPerSubTopic ? active_search.cronTask.limitPerSubTopic ~ ' / query' : 'Unlimited (All pages)' }}
+                                </span>
+                            {% endif %}
                             {% if active_search.enableImages %}
                                 <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">Vision Enabled</span>
                             {% endif %}
@@ -182,9 +187,29 @@
                         </h2>
 
                         {% if active_search.userRequirements %}
-                            <p class="text-xs text-zinc-400">
-                                Requirements: {{ active_search.userRequirements }}
-                            </p>
+                            <p class="text-xs text-zinc-400 whitespace-pre-line">{{ active_search.userRequirements }}</p>
+                        {% endif %}
+
+                        {% if active_search.providerOptions is not empty %}
+                            <div class="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-mono">
+                                {% for pName, pOpts in active_search.providerOptions %}
+                                    {% set summaryParts = [] %}
+                                    {% if pOpts.sort is defined %}{% set summaryParts = summaryParts|merge(['sort:' ~ pOpts.sort]) %}{% endif %}
+                                    {% if pOpts.allow_shipping is defined and pOpts.allow_shipping %}{% set summaryParts = summaryParts|merge(['shipping']) %}{% endif %}
+                                    {% if pOpts.allow_near_me is defined and pOpts.allow_near_me and pOpts.location is defined and pOpts.location %}
+                                        {% set summaryParts = summaryParts|merge(['near:' ~ pOpts.location ~ ' (' ~ (pOpts.radius_km ?? 30) ~ 'km)']) %}
+                                    {% endif %}
+                                    {% if pOpts.search_in_title is defined and pOpts.search_in_title %}{% set summaryParts = summaryParts|merge(['title-only']) %}{% endif %}
+                                    {% if pOpts.owner_type is defined and pOpts.owner_type != 'all' %}{% set summaryParts = summaryParts|merge(['seller:' ~ pOpts.owner_type]) %}{% endif %}
+                                    {% if pOpts.min_condition is defined and pOpts.min_condition != 'all' %}{% set summaryParts = summaryParts|merge(['cond:' ~ pOpts.min_condition]) %}{% endif %}
+                                    {% if pOpts.min_price is defined and pOpts.min_price %}{% set summaryParts = summaryParts|merge(['min:' ~ pOpts.min_price ~ ' EUR']) %}{% endif %}
+                                    {% if summaryParts is not empty %}
+                                        <span class="px-2 py-0.5 rounded bg-zinc-950 text-zinc-400 border border-zinc-800">
+                                            <strong class="text-zinc-200 uppercase">{{ pName }}</strong>: {{ summaryParts|join(' | ') }}
+                                        </span>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
                         {% endif %}
                     </div>
 
@@ -723,14 +748,14 @@
 </div>
 
 {# ==================== NEW SEARCH MODAL ==================== #}
-<div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="w-full max-w-xl rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden">
-        <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
+<div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+    <div class="w-full max-w-2xl rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+        <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60 shrink-0">
             <h3 class="text-sm font-semibold text-zinc-100">New Search Request</h3>
             <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="text-zinc-400 hover:text-white text-xs font-mono">Close</button>
         </div>
 
-        <form method="post" action="{{ path('app_dashboard_search_new') }}" class="p-5 space-y-4 text-xs">
+        <form method="post" action="{{ path('app_dashboard_search_new') }}" class="p-5 space-y-4 text-xs overflow-y-auto">
             <input type="hidden" name="_token" value="{{ csrf_token('dashboard_new_search') }}">
 
             <div>
@@ -757,8 +782,8 @@
                     <input type="number" name="sub_topics_count" min="1" max="15" placeholder="Auto (AI)" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500">
                 </div>
                 <div>
-                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Limit / Search</label>
-                    <input type="number" name="limit" min="5" max="100" value="25" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Max Ads / Query</label>
+                    <input type="number" name="limit" min="1" max="5000" placeholder="Unlimited" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500" title="Leave blank to crawl all available pages (up to server page cap)">
                 </div>
                 <div>
                     <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Cron (minutes)</label>
@@ -766,16 +791,95 @@
                 </div>
             </div>
 
-            <div>
-                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Providers</label>
-                <div class="flex flex-wrap gap-2">
-                    {% for p in ['leboncoin', 'vinted', 'backmarket'] %}
-                        <label class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-zinc-950 border border-zinc-800 font-mono uppercase text-[11px] cursor-pointer">
-                            <input type="checkbox" name="providers[]" value="{{ p }}" checked class="rounded">
-                            <span>{{ p }}</span>
-                        </label>
-                    {% endfor %}
+            {# Providers Selector + DRY Dynamic Per-Provider Options Panels #}
+            {% set selectableProviders = available_providers|filter(p => p != 'mock') %}
+            {% if selectableProviders is empty %}
+                {% set selectableProviders = ['leboncoin', 'vinted', 'backmarket'] %}
+            {% endif %}
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Providers</label>
+                    <div class="flex flex-wrap gap-2">
+                        {% for p in selectableProviders %}
+                            <label class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-zinc-950 border border-zinc-800 font-mono uppercase text-[11px] cursor-pointer">
+                                <input type="checkbox" name="providers[]" value="{{ p }}" checked class="rounded provider-toggle-checkbox" data-provider="{{ p }}">
+                                <span>{{ p }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
                 </div>
+
+                {# Dynamic Option Cards driven purely by ListingProviderInterface::getOptionDefinitions() #}
+                {% for pName, definitions in provider_option_schemas %}
+                    <details open class="rounded-md border border-zinc-800 bg-zinc-950/60 overflow-hidden provider-options-panel" data-provider-panel="{{ pName }}">
+                        <summary class="px-3.5 py-2 cursor-pointer flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-300 bg-zinc-950 hover:bg-zinc-900">
+                            <span>{{ pName }} Options</span>
+                            <span class="text-[10px] text-zinc-500">{{ definitions|length }} settings</span>
+                        </summary>
+                        <input type="hidden" name="provider_options[{{ pName }}][_submitted]" value="1">
+                        <div class="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-zinc-800/80">
+                            {% for opt in definitions %}
+                                <div
+                                    class="space-y-1 {{ opt.type == 'checkbox' ? 'sm:col-span-2' : '' }}"
+                                    {% if opt.dependsOn %}data-depends-provider="{{ pName }}" data-depends-field="{{ opt.dependsOn }}"{% endif %}
+                                >
+                                    {% if opt.type == 'checkbox' %}
+                                        <label class="inline-flex items-start gap-2 text-zinc-200 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                                value="1"
+                                                {{ opt.default ? 'checked' : '' }}
+                                                class="mt-0.5 rounded provider-dep-controller"
+                                                data-provider="{{ pName }}"
+                                                data-field="{{ opt.name }}"
+                                            >
+                                            <span>
+                                                <span class="font-medium">{{ opt.label }}</span>
+                                                {% if opt.help %}
+                                                    <span class="block text-[10px] text-zinc-500">{{ opt.help }}</span>
+                                                {% endif %}
+                                            </span>
+                                        </label>
+                                    {% elseif opt.type == 'select' %}
+                                        <label class="block text-[10px] font-mono uppercase text-zinc-400">{{ opt.label }}</label>
+                                        <select
+                                            name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                            class="w-full px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 focus:outline-none focus:border-zinc-500"
+                                        >
+                                            {% for val, choiceLabel in opt.choices %}
+                                                <option value="{{ val }}" {{ opt.default == val ? 'selected' : '' }}>{{ choiceLabel }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        {% if opt.help %}<p class="text-[10px] text-zinc-500">{{ opt.help }}</p>{% endif %}
+                                    {% elseif opt.type == 'number' %}
+                                        <label class="block text-[10px] font-mono uppercase text-zinc-400">{{ opt.label }}</label>
+                                        <input
+                                            type="number"
+                                            name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                            value="{{ opt.default }}"
+                                            {% if opt.min is not null %}min="{{ opt.min }}"{% endif %}
+                                            {% if opt.max is not null %}max="{{ opt.max }}"{% endif %}
+                                            placeholder="{{ opt.placeholder ?? '' }}"
+                                            class="w-full px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+                                        >
+                                        {% if opt.help %}<p class="text-[10px] text-zinc-500">{{ opt.help }}</p>{% endif %}
+                                    {% else %}
+                                        <label class="block text-[10px] font-mono uppercase text-zinc-400">{{ opt.label }}</label>
+                                        <input
+                                            type="text"
+                                            name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                            value="{{ opt.default }}"
+                                            placeholder="{{ opt.placeholder ?? '' }}"
+                                            class="w-full px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+                                        >
+                                        {% if opt.help %}<p class="text-[10px] text-zinc-500">{{ opt.help }}</p>{% endif %}
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                {% endfor %}
             </div>
 
             <div>
@@ -795,6 +899,48 @@
 {% endblock %}
 
 {% block javascripts %}
+    <script>
+        (function () {
+            function syncProviderPanels() {
+                document.querySelectorAll('.provider-toggle-checkbox').forEach(function (checkbox) {
+                    const provider = checkbox.dataset.provider;
+                    const panel = document.querySelector(`.provider-options-panel[data-provider-panel="${provider}"]`);
+                    if (!panel) return;
+                    const enabled = checkbox.checked;
+                    panel.classList.toggle('hidden', !enabled);
+                    panel.querySelectorAll('input, select, textarea').forEach(function (el) {
+                        el.disabled = !enabled;
+                    });
+                });
+            }
+
+            function syncDependentFields() {
+                document.querySelectorAll('.provider-dep-controller').forEach(function (checkbox) {
+                    const provider = checkbox.dataset.provider;
+                    const field = checkbox.dataset.field;
+                    const visible = checkbox.checked;
+                    document.querySelectorAll(`[data-depends-provider="${provider}"][data-depends-field="${field}"]`).forEach(function (wrapper) {
+                        wrapper.classList.toggle('hidden', !visible);
+                    });
+                });
+            }
+
+            document.querySelectorAll('.provider-toggle-checkbox').forEach(function (checkbox) {
+                checkbox.addEventListener('change', function () {
+                    syncProviderPanels();
+                    syncDependentFields();
+                });
+            });
+
+            document.querySelectorAll('.provider-dep-controller').forEach(function (checkbox) {
+                checkbox.addEventListener('change', syncDependentFields);
+            });
+
+            syncProviderPanels();
+            syncDependentFields();
+        })();
+    </script>
+
     {% if active_search and analytics %}
     <script>
         (function () {

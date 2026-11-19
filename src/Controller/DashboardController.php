@@ -99,6 +99,7 @@ class DashboardController extends AbstractController
             'filtered_evaluations' => $pagination['items'],
             'grouped_evaluations' => $groupedEvaluations,
             'available_providers' => $this->providerRegistry->getAvailableProviderNames(),
+            'provider_option_schemas' => $this->providerRegistry->getOptionSchemas(),
         ]);
     }
 
@@ -175,14 +176,23 @@ class DashboardController extends AbstractController
             ? max(1, min(15, (int) $rawSubTopicsCount))
             : null;
 
+        $rawLimit = trim((string) $request->request->get('limit', ''));
+        $limitPerSubTopic = ('' !== $rawLimit && is_numeric($rawLimit) && (int) $rawLimit > 0)
+            ? max(1, min(5000, (int) $rawLimit))
+            : null;
+
+        /** @var array<string, mixed> $rawProviderOptions */
+        $rawProviderOptions = $request->request->all('provider_options');
+
         $dto = new NewSearchFormDto(
             topic: $rawSpecification,
             targetPrice: (float) $request->request->get('target_price', 50),
             subTopicsCount: $subTopicsCount,
             enableImages: (bool) $request->request->get('enable_images', false),
-            limitPerSubTopic: max(1, min(100, (int) $request->request->get('limit', 25))),
+            limitPerSubTopic: $limitPerSubTopic,
             intervalMinutes: max(5, min(1440, (int) $request->request->get('interval', 30))),
             providers: $providers,
+            providerOptions: [],
         );
 
         $violations = $this->validator->validate($dto);
@@ -201,6 +211,7 @@ class DashboardController extends AbstractController
         }
 
         $providerNames = array_map(static fn ($p): string => $p->getName(), $resolvedProviders);
+        $normalizedProviderOptions = $this->providerRegistry->normalizeProviderOptions($rawProviderOptions, $providerNames);
 
         // Keep SearchRequest::topic within 255 chars and store full multi-line details in userRequirements if longer
         $normalizedOneLine = trim((string) preg_replace('/\s+/', ' ', $dto->topic));
@@ -213,6 +224,7 @@ class DashboardController extends AbstractController
             enableImages: $dto->enableImages,
             userRequirements: $extraDetails,
             enabledProviders: $providerNames,
+            providerOptions: $normalizedProviderOptions,
         );
         $searchRequest->setStatus(SearchStatus::Expanding);
         $this->entityManager->persist($searchRequest);
@@ -261,7 +273,7 @@ class DashboardController extends AbstractController
             throw $this->createNotFoundException('Search request not found.');
         }
 
-        $limit = $searchRequest->getCronTask()?->getLimitPerSubTopic() ?? 25;
+        $limit = $searchRequest->getCronTask() ? $searchRequest->getCronTask()->getLimitPerSubTopic() : 25;
         $searchRequest->setStatus(SearchStatus::Processing);
         $searchRequest->getCronTask()?->markExecuted();
         $this->entityManager->flush();
@@ -329,7 +341,7 @@ class DashboardController extends AbstractController
             $this->entityManager->flush();
             $this->addFlash('info', sprintf('Paused recurring cron task for Search #%d.', $id));
         } else {
-            $cronTask = new CronTask($searchRequest, 30, 25);
+            $cronTask = new CronTask($searchRequest, 30, null);
             $searchRequest->setCronTask($cronTask);
             $this->entityManager->persist($cronTask);
             $this->entityManager->flush();

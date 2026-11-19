@@ -9,7 +9,12 @@
 1. **Domain-Agnostic AI Search Expansion (`TopicExpansionAgent`)**:
    - Describe any item in a single unified **Product Specification** box — whether an exact model (e.g. `"canon printer ax380"`) or a detailed multi-sentence functional specification.
    - The AI automatically expands your description into multiple realistic marketplace search titles/scopes (seller synonyms, French & English phrasings, and matching product models). You can let the AI choose the optimal number of search queries (`Auto`) or specify an exact count (`1` to `15`).
-2. **Multi-Marketplace Scraping (`LeBonCoinProvider`, `VintedProvider`, `BackMarketProvider`)**:
+2. **Multi-Marketplace Relevance Search, Multi-Page Crawling & Per-Provider Filters (`LeBonCoinProvider`, `VintedProvider`, `BackMarketProvider`)**:
+   - Uses each marketplace's native **relevance ranking** by default (matching what you see when typing directly in the site's search bar), with optional sort overrides (`newest`, `price_asc`).
+   - Supports **Unlimited multi-page crawling** (`Max Ads / Query` left blank in UI or `--unlimited` in CLI) to crawl across pages up to a configurable safety cap (`LISTING_PROVIDER_MAX_UNLIMITED_PAGES=15`).
+   - **DRY self-describing Per-Provider Options**:
+     - **LeBonCoin**: `Allow Nationwide Shipping` (default on via `shipping_type=...`), `Allow Near Me` (city/postal code geocoded via `api-adresse.data.gouv.fr` + configurable radius km; enabling BOTH runs a deduplicated **UNION** of shippable ads nationwide + local pickup ads near you), `Match Keywords in Title Only`, `Seller Type` (`all`/`private`/`pro`), `Search Ranking`, and `Min Price`.
+     - **Vinted**: `Search Ranking` (`relevance`/`newest_first`/`price_low_to_high`), `Minimum Condition` (`status_ids[]`), and `Min Price`.
    - Asynchronous fetching via **Symfony Messenger** with deduplication (`uniq_listing_search_provider_external_id`) and concurrency safety (`symfony/lock`).
 3. **Strict 5-Tier AI Technical Appraisal (`ListingEvaluatorAgent`)**:
    - Evaluates each listing on **Relevance** (45%), **Price vs. Target Budget** (25%), **Working Condition** (20%), and **Product Age** (10%), with optional **Vision AI** photo inspection.
@@ -31,7 +36,7 @@
 
 Access the dashboard at `/` (e.g. `https://listing-finder.zt.home.arpa/` or `https://localhost/`):
 
-- **New Search Request Modal**: Single large **Product Specification & Requirements** textarea, **Target Price (EUR)**, **AI Searches Count** (`Auto` or `1–15`), **Limit / Search**, **Cron Interval**, **Providers**, and **Vision AI** toggle.
+- **New Search Request Modal**: Single large **Product Specification & Requirements** textarea, **Target Price (EUR)**, **AI Searches Count** (`Auto` or `1–15`), **Max Ads / Query** (leave blank for **Unlimited** multi-page crawl), **Cron Interval**, **Providers**, dynamic per-provider option cards (LeBonCoin shipping + near-me location/radius, title-only, seller type; Vinted sort, min condition, min price), and **Vision AI** toggle.
 - **Filter & Sort Toolbar**:
   - Sort **By Category** (grouped into the 5 tiers) or **By Score** (`100 -> 0`).
   - Filter by a single tier (`Must Buy`, `Ext. Good`, `Good`, `Bad`, `Poor`), provider (`LeBonCoin`, `Vinted`), AI sub-topic pill, keyword search (`q`), max price (`maxPrice`), or functional items only (`onlyWorking`).
@@ -45,7 +50,8 @@ Access the dashboard at `/` (e.g. `https://listing-finder.zt.home.arpa/` or `htt
 ```bash
 # 1. Start a new search and register a 30-minute recurring cron task
 #    (Omit --sub-topics to let the AI decide the number of search queries, or pass -s N)
-php bin/console app:search:start --price=50 "canon printer ax380 in working condition"
+#    (Use --unlimited / -u to crawl all pages, and -o provider.key=value for provider options)
+php bin/console app:search:start --price=50 --unlimited -o leboncoin.allow_shipping=true -o leboncoin.allow_near_me=true -o leboncoin.location=Lyon -o leboncoin.radius_km=30 "canon printer ax380 in working condition"
 php bin/console app:search:start --price=120 --sub-topics=6 --limit=25 "compact mirrorless camera 4k with lens"
 
 # 2. Display evaluated results in the terminal
@@ -85,6 +91,7 @@ php bin/console messenger:consume scheduler_default async --time-limit=3600 --me
 | `AI_TIMEOUT` | `120` | LLM request timeout in seconds |
 | `LISTING_PROVIDERS_ENABLED` | `leboncoin,vinted,backmarket` | Default enabled marketplace providers |
 | `LISTING_PROVIDER_FALLBACK_TO_MOCK` | `false` (prod) / `true` (dev/test) | Whether HTTP failures fall back to `MockListingProvider` |
+| `LISTING_PROVIDER_MAX_UNLIMITED_PAGES` | `15` | Safety page cap per query when crawling in Unlimited mode |
 
 ---
 

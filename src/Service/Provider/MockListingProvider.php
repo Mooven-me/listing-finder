@@ -14,11 +14,21 @@ class MockListingProvider implements ListingProviderInterface
     }
 
     /**
+     * @param array<string, mixed> $options
+     *
      * @return list<FetchedListingDto>
      */
-    public function search(string $query, ?float $maxPrice = null, int $limit = 25): array
+    public function search(string $query, ?float $maxPrice = null, ?int $limit = 25, array $options = []): array
     {
-        return $this->generateRealisticFixtures($this->getName(), $query, $maxPrice, $limit);
+        return $this->generateRealisticFixtures($this->getName(), $query, $maxPrice, $limit ?? 10);
+    }
+
+    /**
+     * @return list<\App\Dto\Provider\ProviderOptionDefinition>
+     */
+    public function getOptionDefinitions(): array
+    {
+        return [];
     }
 
     /**

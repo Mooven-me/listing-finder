@@ -44,6 +44,14 @@ class SearchRequest
     #[ORM\Column(type: Types::JSON)]
     private array $enabledProviders = [];
 
+    /**
+     * Per-provider filter/search options keyed by lowercase provider name.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    #[ORM\Column(type: Types::JSON, options: ['default' => '{}'])]
+    private array $providerOptions = [];
+
     #[ORM\Column(length: 32, enumType: SearchStatus::class)]
     private SearchStatus $status = SearchStatus::Pending;
 
@@ -66,7 +74,8 @@ class SearchRequest
     private ?CronTask $cronTask = null;
 
     /**
-     * @param list<string> $enabledProviders
+     * @param list<string>                        $enabledProviders
+     * @param array<string, array<string, mixed>> $providerOptions
      */
     public function __construct(
         string $topic,
@@ -74,12 +83,14 @@ class SearchRequest
         bool $enableImages = false,
         ?string $userRequirements = null,
         array $enabledProviders = [],
+        array $providerOptions = [],
     ) {
         $this->topic = $topic;
         $this->targetPrice = $targetPrice;
         $this->enableImages = $enableImages;
         $this->userRequirements = $userRequirements;
         $this->enabledProviders = $enabledProviders;
+        $this->providerOptions = $providerOptions;
         $this->createdAt = new \DateTimeImmutable();
         $this->listings = new ArrayCollection();
         $this->evaluations = new ArrayCollection();
@@ -134,6 +145,35 @@ class SearchRequest
     public function getEnabledProviders(): array
     {
         return $this->enabledProviders;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    public function getProviderOptions(): array
+    {
+        return $this->providerOptions;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getOptionsForProvider(string $providerName): array
+    {
+        $key = strtolower(trim($providerName));
+        $opts = $this->providerOptions[$key] ?? [];
+
+        return \is_array($opts) ? $opts : [];
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $providerOptions
+     */
+    public function setProviderOptions(array $providerOptions): self
+    {
+        $this->providerOptions = $providerOptions;
+
+        return $this;
     }
 
     public function getStatus(): SearchStatus

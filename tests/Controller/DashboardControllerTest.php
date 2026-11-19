@@ -36,11 +36,20 @@ final class DashboardControllerTest extends WebTestCase
             enableImages: false,
             userRequirements: 'Power cable included',
             enabledProviders: ['leboncoin', 'vinted'],
+            providerOptions: [
+                'leboncoin' => [
+                    'sort' => 'relevance',
+                    'allow_shipping' => true,
+                    'allow_near_me' => true,
+                    'location' => 'Lyon',
+                    'radius_km' => 30,
+                ],
+            ],
         );
         $searchRequest->setGeneratedSubTopics(['Canon AX380', 'imprimante canon ax380']);
         $searchRequest->setStatus(SearchStatus::Completed);
 
-        $cronTask = new CronTask($searchRequest, 30, 25);
+        $cronTask = new CronTask($searchRequest, 30, null);
         $searchRequest->setCronTask($cronTask);
 
         $listingMustBuy = new Listing(
@@ -119,13 +128,19 @@ final class DashboardControllerTest extends WebTestCase
         self::assertStringContainsString('Canon Printer AX380 Parfait Etat', $content);
         self::assertStringContainsString('Canon Pixma AX380 Wi-Fi Printer', $content);
         self::assertStringContainsString('Excellent Canon AX380 printer deal 30% below target price.', $content);
+        self::assertStringContainsString('Unlimited (All pages)', $content);
+        self::assertStringContainsString('near:Lyon (30km)', $content);
+        self::assertStringContainsString('leboncoin Options', $content);
+        self::assertStringContainsString('vinted Options', $content);
+        self::assertStringContainsString('Max Ads / Query', $content);
 
         // 2. Filter by single category (must_buy)
-        $client->request('GET', sprintf('/?search=%d&category=must_buy', $searchId));
+        $mustBuyCrawler = $client->request('GET', sprintf('/?search=%d&category=must_buy', $searchId));
         self::assertResponseIsSuccessful();
-        $mustBuyContent = (string) $client->getResponse()->getContent();
-        self::assertStringContainsString('Canon Printer AX380 Parfait Etat', $mustBuyContent);
-        self::assertStringNotContainsString('Canon Pixma AX380 Wi-Fi Printer', $mustBuyContent);
+        self::assertCount(1, $mustBuyCrawler->filter('article'));
+        $mustBuyCardText = $mustBuyCrawler->filter('article')->text();
+        self::assertStringContainsString('Canon Printer AX380 Parfait Etat', $mustBuyCardText);
+        self::assertStringNotContainsString('Canon Pixma AX380 Wi-Fi Printer', $mustBuyCardText);
 
         // 3. Sort by score + compact table view + pagination
         $client->request('GET', sprintf('/?search=%d&sort=score&view=table&perPage=10&page=1', $searchId));

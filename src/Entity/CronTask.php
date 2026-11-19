@@ -25,8 +25,8 @@ class CronTask
     #[ORM\Column(type: Types::INTEGER)]
     private int $intervalMinutes;
 
-    #[ORM\Column(type: Types::INTEGER)]
-    private int $limitPerSubTopic;
+    #[ORM\Column(type: Types::INTEGER, nullable: true)]
+    private ?int $limitPerSubTopic;
 
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
     private ?\DateTimeImmutable $lastRunAt;
@@ -43,13 +43,13 @@ class CronTask
     public function __construct(
         SearchRequest $searchRequest,
         int $intervalMinutes = 30,
-        int $limitPerSubTopic = 25,
+        ?int $limitPerSubTopic = 25,
         ?\DateTimeImmutable $now = null,
     ) {
         $currentTime = $now ?? new \DateTimeImmutable();
         $this->searchRequest = $searchRequest;
         $this->intervalMinutes = max(1, $intervalMinutes);
-        $this->limitPerSubTopic = max(1, $limitPerSubTopic);
+        $this->limitPerSubTopic = null !== $limitPerSubTopic && $limitPerSubTopic > 0 ? $limitPerSubTopic : null;
         $this->createdAt = $currentTime;
         $this->lastRunAt = $currentTime;
         $this->nextRunAt = $currentTime->modify(sprintf('+%d minutes', $this->intervalMinutes));
@@ -77,7 +77,7 @@ class CronTask
         return $this;
     }
 
-    public function getLimitPerSubTopic(): int
+    public function getLimitPerSubTopic(): ?int
     {
         return $this->limitPerSubTopic;
     }

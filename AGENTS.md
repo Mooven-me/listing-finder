@@ -13,10 +13,10 @@ Twig, API Platform, Messenger, or Lock are installed unless one of those says so
 - **NEVER hardcode product-specific or category-specific keywords/regexes** (such as specific electronics, networking switches, etc.) into the AI prompts or evaluation guardrails. All prompts and heuristics must remain 100% universal across all product categories.
 
 ### 2. Core Entities (`src/Entity/`)
-- `SearchRequest`: Stores the user's product specification (`topic` and optional overflow/details in `userRequirements`), `targetPrice`, `enableImages`, AI-generated `generatedSubTopics` (JSON list of search queries/titles), `enabledProviders` (JSON list), `status` (`SearchStatus`: `pending`, `expanding`, `processing`, `completed`, `failed`), and a 1-to-1 relation to `CronTask`.
+- `SearchRequest`: Stores the user's product specification (`topic` and optional overflow/details in `userRequirements`), `targetPrice`, `enableImages`, AI-generated `generatedSubTopics` (JSON list of search queries/titles), `enabledProviders` (JSON list), `providerOptions` (JSON map `[providerName => [optionKey => normalizedValue]]`), `status` (`SearchStatus`: `pending`, `expanding`, `processing`, `completed`, `failed`), and a 1-to-1 relation to `CronTask`.
 - `Listing`: A marketplace ad linked to a `SearchRequest`. Deduplicated by unique constraint `(search_request_id, provider, external_id)`. Tracks `searchTopicUsed`, `title`, `description`, `price`, `currency`, `url`, `imageUrls`, `conditionState`, `publishedAt`, and `isComputed` (whether AI evaluation has completed).
 - `ListingEvaluation`: AI appraisal for a `(SearchRequest, Listing)` pair. Stores `scoreOutOf100` (`0–100`), `category` (`DealCategory`), 4 sub-scores (`priceScore`, `workingConditionScore`, `productAgeScore`, `relevanceScore`), `isWorking`, `estimatedAge`, `aiReasoning`, and `imageAnalyzed`.
-- `CronTask`: Recurring schedule metadata for a `SearchRequest` (`intervalMinutes`, `limitPerSubTopic`, `lastRunAt`, `nextRunAt`, `runCount`).
+- `CronTask`: Recurring schedule metadata for a `SearchRequest` (`intervalMinutes`, nullable `limitPerSubTopic` where `null` = Unlimited multi-page crawl, `lastRunAt`, `nextRunAt`, `runCount`).
 
 ### 3. 5-Tier Deal Classification (`App\Enum\DealCategory`)
 - `MustBuy` (`must_buy`): **90–100** — Rare, exact product & specification match, functional, and priced at or below target budget.
@@ -30,10 +30,13 @@ Twig, API Platform, Messenger, or Lock are installed unless one of those says so
 - `TopicExpansionAgent`: Takes the user's unified Product Specification and an optional `requestedCount` (`1..15`, or `null` for `Auto` where the AI picks `4..10` queries) and generates short marketplace search titles/scopes (seller synonyms, French & English phrasings, and matching product models).
 - `ListingEvaluatorAgent`: Evaluates a `Listing` against the `SearchRequest` specification using semantic and technical equivalence, followed by universal post-LLM guardrails (`enforceStrictCalibration`) enforcing working-condition caps, relevance floors, price-to-target ratios, and weighted composite ceilings.
 
-### 5. Marketplace Providers (`src/Service/Provider/`)
-- `ListingProviderInterface` & `AbstractHttpListingProvider` (tagged `app.listing_provider` and resolved by `ListingProviderRegistry`).
-- `LeBonCoinProvider`: Parses LeBonCoin's SSR Next.js `<script id="__NEXT_DATA__">` JSON payload from `https://www.leboncoin.fr/recherche`.
-- `VintedProvider`: Parses Vinted's SSR catalog HTML (`https://www.vinted.fr/catalog`) with fallback to API v2.
+### 5. Marketplace Providers & DRY Per-Provider Options (`src/Service/Provider/`, `src/Dto/Provider/`)
+- `ListingProviderInterface` & `AbstractHttpListingProvider` (tagged `app.listing_provider` and resolved by `ListingProviderRegistry`):
+  - Every provider declares its UI/CLI options via `getOptionDefinitions(): list<ProviderOptionDefinition>` (`checkbox`, `select`, `text`, `number`, with optional `dependsOn` conditional visibility). `ListingProviderRegistry::getOptionSchemas()` drives dynamic Twig option cards automatically, and `normalizeProviderOptions()` validates/normalizes form & CLI inputs (including unchecked checkboxes).
+  - `search(string $query, ?float $maxPrice = null, ?int $limit = 25, array $options = [])` supports `?int $limit = null` (Unlimited multi-page crawling capped by `LISTING_PROVIDER_MAX_UNLIMITED_PAGES=15`).
+- `FrenchGeocoderService`: Resolves French cities/postal codes via `https://api-adresse.data.gouv.fr/search/` with Symfony Cache (`CacheInterface`, 7-day TTL) + in-memory cache.
+- `LeBonCoinProvider`: Crawls LeBonCoin's SSR Next.js `<script id="__NEXT_DATA__">` payload (`https://www.leboncoin.fr/recherche`) across pages (35 ads/page, respects `max_pages`, never sends `Referer` to avoid DataDome 403). Defaults to native **relevance** ranking (omits `sort=time`) and nationwide shipping (`shipping_type=mondial_relay,colissimo,chronopost,shop2shop,relais_colis`). When both `allow_shipping` and `allow_near_me` (+ `location`/`radius_km`) are enabled, runs a deduplicated **UNION** of nationwide shipping + local radius (`locations=<City_Postcode>__<lat>_<lng>_5000_<radiusMeters>`). Also supports `search_in_title` (`search_in=subject`), `owner_type` (`private`/`pro`), and `min_price`.
+- `VintedProvider`: Crawls Vinted's SSR catalog HTML (`https://www.vinted.fr/catalog`, 96 ads/page) across pages with fallback to API v2. Defaults to `order=relevance` and supports `sort`, `min_condition` (`status_ids[]`), and `min_price`.
 - `BackMarketProvider`: Parses JSON-LD product items from `https://www.backmarket.fr/fr-fr/search`.
 - `MockListingProvider`: Deterministic fixture generator for tests (`LISTING_PROVIDER_FALLBACK_TO_MOCK=false` in production).
 
@@ -49,7 +52,7 @@ Twig, API Platform, Messenger, or Lock are installed unless one of those says so
   - `GET /api/dashboard/status/{id}`: Real-time JSON telemetry endpoint polled every 5 seconds to update global stats, tier counts, cron countdown, and Chart.js datasets live.
   - `POST /search/new`, `/search/{id}/refresh`, `/search/{id}/reevaluate`, `/search/{id}/cron-toggle`, `/search/{id}/delete`.
 - **CLI Commands**:
-  - `app:search:start`: Expands specification, creates `SearchRequest` + `CronTask`, dispatches jobs.
+  - `app:search:start`: Expands specification, creates `SearchRequest` + `CronTask`, dispatches jobs (supports `--sub-topics`/`-s`, `--limit`/`-l`, `--unlimited`/`-u`, and repeatable `--provider-option`/`-o provider.key=value`).
   - `app:search:results`: Displays results in CLI (`--by-category`, `--by-score`, positional `category` filter, `--all`, `--json`).
   - `app:cron:run` & `app:search:stop`.
 

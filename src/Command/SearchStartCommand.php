@@ -42,8 +42,10 @@ class SearchStartCommand extends Command
             ->addOption('sub-topics', 's', InputOption::VALUE_REQUIRED, 'Number of AI search queries/titles to generate (1-15, or omit for Auto)')
             ->addOption('with-images', null, InputOption::VALUE_NONE, 'Enable AI image inspection for fetched listings')
             ->addOption('providers', null, InputOption::VALUE_REQUIRED, 'Comma-separated list of providers (leboncoin,vinted,backmarket,mock)')
+            ->addOption('provider-option', 'o', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Per-provider option as provider.key=value (e.g. -o leboncoin.allow_shipping=1 -o leboncoin.allow_near_me=1 -o leboncoin.location=Lyon)')
             ->addOption('requirements', 'r', InputOption::VALUE_REQUIRED, 'Additional user requirements (merged into specification)')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max listings fetched per sub-topic per provider', '25')
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max listings fetched per query per provider (0 = unlimited / all pages)', '25')
+            ->addOption('unlimited', 'u', InputOption::VALUE_NONE, 'Fetch all available pages without an ad limit (equivalent to --limit=0)')
             ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Recurring cron interval in minutes', '30');
     }
 
@@ -72,7 +74,9 @@ class SearchStartCommand extends Command
         $requestedSubTopicsCount = is_string($subTopicsOption) && '' !== trim($subTopicsOption) && is_numeric(trim($subTopicsOption))
             ? max(1, min(15, (int) trim($subTopicsOption)))
             : null;
-        $limit = max(1, (int) $input->getOption('limit'));
+        $unlimited = (bool) $input->getOption('unlimited');
+        $rawLimit = (int) $input->getOption('limit');
+        $limit = ($unlimited || $rawLimit <= 0) ? null : $rawLimit;
         $intervalMinutes = max(1, (int) $input->getOption('interval'));
 
         $providersOption = $input->getOption('providers');
@@ -91,6 +95,22 @@ class SearchStartCommand extends Command
 
         $providerNames = array_map(static fn ($provider): string => $provider->getName(), $resolvedProviders);
 
+        // Parse repeatable --provider-option provider.key=value flags
+        /** @var array<string, array<string, mixed>> $rawProviderOptions */
+        $rawProviderOptions = [];
+        $cliProviderOptions = $input->getOption('provider-option');
+        if (\is_array($cliProviderOptions)) {
+            foreach ($cliProviderOptions as $expr) {
+                if (!\is_string($expr) || 1 !== preg_match('/^([a-z0-9_-]+)\.([a-z0-9_-]+)=(.*)$/i', trim($expr), $m)) {
+                    $io->warning(sprintf('Ignoring malformed --provider-option "%s" (expected provider.key=value).', (string) $expr));
+
+                    continue;
+                }
+                $rawProviderOptions[strtolower($m[1])][strtolower($m[2])] = $m[3];
+            }
+        }
+        $normalizedProviderOptions = $this->providerRegistry->normalizeProviderOptions($rawProviderOptions, $providerNames);
+
         $io->title('Listing Finder - Search & Recurring Cron Setup');
 
         $searchRequest = new SearchRequest(
@@ -99,6 +119,7 @@ class SearchStartCommand extends Command
             enableImages: $enableImages,
             userRequirements: $requirements,
             enabledProviders: $providerNames,
+            providerOptions: $normalizedProviderOptions,
         );
         $searchRequest->setStatus(SearchStatus::Expanding);
 
@@ -138,6 +159,7 @@ class SearchStartCommand extends Command
             ['Image Analysis Enabled' => $enableImages ? 'Yes' : 'No'],
             ['User Requirements' => $requirements ?? 'None specified'],
             ['Providers' => implode(', ', $providerNames)],
+            ['Max Ads / Query' => null !== $limit ? (string) $limit : 'Unlimited (All pages)'],
             ['Sub-Topics Generated' => (string) count($subTopics)],
             ['Initial Jobs Queued' => (string) $dispatchedCount],
             ['Cron Schedule' => sprintf('Every %d minutes (Incremental: new ads only)', $cronTask->getIntervalMinutes())],

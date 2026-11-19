@@ -17,14 +17,18 @@ class BackMarketProvider extends AbstractHttpListingProvider
     }
 
     /**
+     * @param array<string, mixed> $options
+     *
      * @return list<FetchedListingDto>
      */
-    public function search(string $query, ?float $maxPrice = null, int $limit = 25): array
+    public function search(string $query, ?float $maxPrice = null, ?int $limit = 25, array $options = []): array
     {
         $cleanQuery = trim($query);
         if ('' === $cleanQuery) {
             return [];
         }
+
+        $effectiveLimit = (null !== $limit && $limit > 0) ? $limit : 50;
 
         try {
             $response = $this->httpClient->request('GET', self::SEARCH_URL, [
@@ -48,8 +52,8 @@ class BackMarketProvider extends AbstractHttpListingProvider
             $crawler = new Crawler($html, self::SEARCH_URL);
             $listings = [];
 
-            $crawler->filter('script[type="application/ld+json"]')->each(function (Crawler $node) use (&$listings, $limit): void {
-                if (count($listings) >= $limit) {
+            $crawler->filter('script[type="application/ld+json"]')->each(function (Crawler $node) use (&$listings, $effectiveLimit): void {
+                if (count($listings) >= $effectiveLimit) {
                     return;
                 }
 
@@ -68,7 +72,7 @@ class BackMarketProvider extends AbstractHttpListingProvider
                 }
 
                 foreach ($items as $element) {
-                    if (count($listings) >= $limit || !is_array($element)) {
+                    if (count($listings) >= $effectiveLimit || !is_array($element)) {
                         continue;
                     }
 

@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Service\Provider;
 
 use App\Dto\Provider\FetchedListingDto;
+use App\Dto\Provider\ProviderOptionDefinition;
 use Symfony\Component\DomCrawler\Crawler;
 
 class VintedProvider extends AbstractHttpListingProvider
 {
     private const CATALOG_API_URL = 'https://www.vinted.fr/api/v2/catalog/items';
     private const CATALOG_WEB_URL = 'https://www.vinted.fr/catalog';
+    private const ITEMS_PER_PAGE = 96;
 
     public function getName(): string
     {
@@ -18,49 +20,96 @@ class VintedProvider extends AbstractHttpListingProvider
     }
 
     /**
+     * @return list<ProviderOptionDefinition>
+     */
+    public function getOptionDefinitions(): array
+    {
+        return [
+            new ProviderOptionDefinition(
+                name: 'sort',
+                label: 'Search Ranking',
+                type: ProviderOptionDefinition::TYPE_SELECT,
+                default: 'relevance',
+                choices: [
+                    'relevance' => 'Relevance (Default)',
+                    'newest_first' => 'Newest First',
+                    'price_low_to_high' => 'Price: Low to High',
+                ],
+                help: 'Matches Vinted catalog relevance ranking by default.',
+            ),
+            new ProviderOptionDefinition(
+                name: 'min_condition',
+                label: 'Minimum Condition',
+                type: ProviderOptionDefinition::TYPE_SELECT,
+                default: 'all',
+                choices: [
+                    'all' => 'All Conditions',
+                    'good_plus' => 'Good or Better',
+                    'very_good_plus' => 'Very Good or Better',
+                    'new_only' => 'New Only',
+                ],
+            ),
+            new ProviderOptionDefinition(
+                name: 'min_price',
+                label: 'Min Price (EUR)',
+                type: ProviderOptionDefinition::TYPE_NUMBER,
+                default: null,
+                placeholder: 'Optional (skip accessories)',
+                min: 1,
+                max: 100000,
+            ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     *
      * @return list<FetchedListingDto>
      */
-    public function search(string $query, ?float $maxPrice = null, int $limit = 25): array
+    public function search(string $query, ?float $maxPrice = null, ?int $limit = 25, array $options = []): array
     {
         $cleanQuery = trim($query);
         if ('' === $cleanQuery) {
             return [];
         }
 
+        $opts = $this->normalizeOptions($options);
+        $effectiveLimit = (null !== $limit && $limit > 0) ? $limit : null;
+
         $queryParams = [
             'search_text' => $cleanQuery,
-            'order' => 'newest_first',
+            'order' => is_string($opts['sort'] ?? null) ? $opts['sort'] : 'relevance',
+            'currency' => 'EUR',
         ];
+
+        if (is_numeric($opts['min_price'] ?? null) && (float) $opts['min_price'] > 0.0) {
+            $queryParams['price_from'] = (string) round((float) $opts['min_price'], 2);
+        }
 
         if (null !== $maxPrice && $maxPrice > 0.0) {
             $queryParams['price_to'] = (string) round($maxPrice * 1.5, 2);
-            $queryParams['currency'] = 'EUR';
+        }
+
+        $statusIds = match ($opts['min_condition'] ?? 'all') {
+            'new_only' => ['6', '1'],
+            'very_good_plus' => ['6', '1', '2'],
+            'good_plus' => ['6', '1', '2', '3'],
+            default => [],
+        };
+        if ([] !== $statusIds) {
+            $queryParams['status_ids'] = $statusIds;
         }
 
         try {
-            // 1. Try HTML catalog page first (works reliably without session/cookie gates)
-            $webResponse = $this->httpClient->request('GET', self::CATALOG_WEB_URL, [
-                'timeout' => 10.0,
-                'headers' => array_merge($this->defaultHeaders(), [
-                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Referer' => 'https://www.vinted.fr/',
-                ]),
-                'query' => $queryParams,
-            ]);
-
-            if (200 === $webResponse->getStatusCode()) {
-                $html = $webResponse->getContent(false);
-                if ('' !== trim($html)) {
-                    $parsedFromHtml = $this->parseCatalogHtml($html, $limit);
-                    if ([] !== $parsedFromHtml) {
-                        return $parsedFromHtml;
-                    }
-                }
+            // 1. Primary: Crawl Vinted SSR catalog HTML across pages
+            $webListings = $this->crawlCatalogPages($queryParams, $effectiveLimit);
+            if ([] !== $webListings) {
+                return $webListings;
             }
 
             // 2. Fallback to JSON API v2 if HTML returned no items
             $apiQueryParams = $queryParams;
-            $apiQueryParams['per_page'] = $limit;
+            $apiQueryParams['per_page'] = $effectiveLimit ?? 25;
 
             $response = $this->httpClient->request('GET', self::CATALOG_API_URL, [
                 'timeout' => 8.0,
@@ -72,19 +121,20 @@ class VintedProvider extends AbstractHttpListingProvider
 
             $statusCode = $response->getStatusCode();
             if (200 !== $statusCode) {
-                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $limit, sprintf('HTTP status %d', $statusCode));
+                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $effectiveLimit, sprintf('HTTP status %d', $statusCode));
             }
 
             /** @var array<string, mixed> $payload */
             $payload = $response->toArray(false);
             $items = $payload['items'] ?? null;
-            if (!is_array($items) || [] === $items) {
-                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $limit, 'Empty or missing items array in response');
+            if (!\is_array($items) || [] === $items) {
+                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $effectiveLimit, 'Empty or missing items array in response');
             }
 
+            $slice = null !== $effectiveLimit ? \array_slice($items, 0, $effectiveLimit) : $items;
             $listings = [];
-            foreach (array_slice($items, 0, $limit) as $item) {
-                if (!is_array($item)) {
+            foreach ($slice as $item) {
+                if (!\is_array($item)) {
                     continue;
                 }
 
@@ -102,7 +152,7 @@ class VintedProvider extends AbstractHttpListingProvider
                 }
 
                 $images = [];
-                if (isset($item['photo']['url']) && is_string($item['photo']['url'])) {
+                if (isset($item['photo']['url']) && \is_string($item['photo']['url'])) {
                     $images[] = $item['photo']['url'];
                 }
 
@@ -111,36 +161,99 @@ class VintedProvider extends AbstractHttpListingProvider
                     externalId: $externalId,
                     title: $title,
                     price: $priceValue,
-                    url: isset($item['url']) && is_string($item['url']) ? $item['url'] : sprintf('https://www.vinted.fr/items/%s', $externalId),
-                    description: isset($item['description']) && is_string($item['description']) ? $item['description'] : null,
-                    currency: isset($item['price']['currency_code']) && is_string($item['price']['currency_code']) ? $item['price']['currency_code'] : 'EUR',
+                    url: isset($item['url']) && \is_string($item['url']) ? $item['url'] : sprintf('https://www.vinted.fr/items/%s', $externalId),
+                    description: isset($item['description']) && \is_string($item['description']) ? $item['description'] : null,
+                    currency: isset($item['price']['currency_code']) && \is_string($item['price']['currency_code']) ? $item['price']['currency_code'] : 'EUR',
                     imageUrls: $images,
-                    conditionState: isset($item['status']) && is_string($item['status']) ? $item['status'] : null,
+                    conditionState: isset($item['status']) && \is_string($item['status']) ? $item['status'] : null,
                     publishedAt: new \DateTimeImmutable(),
                 );
             }
 
             if ([] === $listings) {
-                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $limit, 'No valid Vinted items parsed');
+                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $effectiveLimit, 'No valid Vinted items parsed');
             }
 
             return $listings;
         } catch (\Throwable $e) {
-            return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $limit, $e->getMessage());
+            return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $effectiveLimit, $e->getMessage());
         }
     }
 
     /**
+     * @param array<string, mixed> $queryParams
+     *
      * @return list<FetchedListingDto>
      */
-    private function parseCatalogHtml(string $html, int $limit): array
+    private function crawlCatalogPages(array $queryParams, ?int $limit): array
+    {
+        $collected = [];
+        $seenIds = [];
+        $maxPages = $this->resolveMaxPages($limit, self::ITEMS_PER_PAGE);
+
+        for ($page = 1; $page <= $maxPages; ++$page) {
+            if (null !== $limit && \count($collected) >= $limit) {
+                break;
+            }
+
+            if ($page > 1) {
+                usleep(250_000);
+            }
+
+            $pageParams = $queryParams;
+            if ($page > 1) {
+                $pageParams['page'] = (string) $page;
+            }
+
+            $webResponse = $this->httpClient->request('GET', self::CATALOG_WEB_URL, [
+                'timeout' => 10.0,
+                'headers' => array_merge($this->defaultHeaders(), [
+                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Referer' => 'https://www.vinted.fr/',
+                ]),
+                'query' => $pageParams,
+            ]);
+
+            if (200 !== $webResponse->getStatusCode()) {
+                break;
+            }
+
+            $html = $webResponse->getContent(false);
+            if ('' === trim($html)) {
+                break;
+            }
+
+            $remaining = null !== $limit ? ($limit - \count($collected)) : null;
+            $parsedFromHtml = $this->parseCatalogHtml($html, $remaining, $seenIds);
+            if ([] === $parsedFromHtml) {
+                break;
+            }
+
+            foreach ($parsedFromHtml as $dto) {
+                $collected[] = $dto;
+            }
+
+            // If Vinted returned fewer items than a full page, there are no more pages
+            if (\count($parsedFromHtml) < 20) {
+                break;
+            }
+        }
+
+        return $collected;
+    }
+
+    /**
+     * @param array<string, bool> $seenIds
+     *
+     * @return list<FetchedListingDto>
+     */
+    private function parseCatalogHtml(string $html, ?int $limit, array &$seenIds = []): array
     {
         $crawler = new Crawler($html, 'https://www.vinted.fr');
         $listings = [];
-        $seenIds = [];
 
         $crawler->filter('a[href*="/items/"]')->each(function (Crawler $node) use (&$listings, &$seenIds, $limit): void {
-            if (\count($listings) >= $limit) {
+            if (null !== $limit && \count($listings) >= $limit) {
                 return;
             }
 

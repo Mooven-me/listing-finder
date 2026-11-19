@@ -19,6 +19,7 @@ data:
   AI_TIMEOUT: "120"
   LISTING_PROVIDERS_ENABLED: "leboncoin,vinted,backmarket"
   LISTING_PROVIDER_FALLBACK_TO_MOCK: "false"
+  LISTING_PROVIDER_MAX_UNLIMITED_PAGES: "15"
   MERCURE_URL: "http://listing-finder-web/.well-known/mercure"
   MERCURE_PUBLIC_URL: "https://listing-finder.zt.home.arpa/.well-known/mercure"
   MERCURE_JWT_ISSUER: "https://listing-finder.zt.home.arpa"

@@ -15,7 +15,7 @@ class SearchDispatcherService
     ) {
     }
 
-    public function dispatchSearchJobs(SearchRequest $searchRequest, int $limitPerSubTopic = 25): int
+    public function dispatchSearchJobs(SearchRequest $searchRequest, ?int $limitPerSubTopic = 25): int
     {
         $searchRequestId = $searchRequest->getId();
         if (null === $searchRequestId) {
@@ -23,7 +23,7 @@ class SearchDispatcherService
         }
 
         $dispatchedCount = 0;
-        $limit = max(1, $limitPerSubTopic);
+        $limit = null !== $limitPerSubTopic && $limitPerSubTopic > 0 ? $limitPerSubTopic : null;
 
         foreach ($searchRequest->getGeneratedSubTopics() as $subTopic) {
             foreach ($searchRequest->getEnabledProviders() as $providerName) {

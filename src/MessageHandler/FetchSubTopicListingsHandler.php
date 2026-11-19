@@ -54,6 +54,7 @@ class FetchSubTopicListingsHandler
             $message->subTopic,
             $searchRequest->getTargetPrice(),
             $message->limit,
+            $searchRequest->getOptionsForProvider($message->providerName),
         );
 
         $newListingIdsToEvaluate = [];
