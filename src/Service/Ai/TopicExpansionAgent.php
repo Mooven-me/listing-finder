@@ -29,6 +29,12 @@ final class TopicExpansionAgent
         'looking', 'wanted', 'buy', 'buying', 'model', 'models',
     ];
 
+    /** @var list<string> */
+    private const NON_HEAD_NOUN_ATTRIBUTES = [
+        'port', 'ports', 'size', 'taille', 'color', 'couleur', 'type', 'version',
+        'edition', 'series', 'serie', 'design', 'feature', 'features', 'speed', 'capacity', 'capacite',
+    ];
+
     public function __construct(
         private readonly LlmClientInterface $llmClient,
         private readonly LoggerInterface $logger,
@@ -300,7 +306,7 @@ PROMPT;
             $seenInTag = [];
             foreach ($words as $idx => $word) {
                 $lower = mb_strtolower($word);
-                if (mb_strlen($lower) < 3 || 1 === preg_match('/\d/', $lower) || isset($seenInTag[$lower]) || \in_array($lower, self::STOP_WORDS, true) || \in_array($lower, self::FORBIDDEN_META_WORDS, true)) {
+                if (mb_strlen($lower) < 3 || 1 === preg_match('/\d/', $lower) || isset($seenInTag[$lower]) || \in_array($lower, self::STOP_WORDS, true) || \in_array($lower, self::FORBIDDEN_META_WORDS, true) || \in_array($lower, self::NON_HEAD_NOUN_ATTRIBUTES, true)) {
                     continue;
                 }
                 $seenInTag[$lower] = true;

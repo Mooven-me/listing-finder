@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\MessageHandler;
 
+use App\Entity\Listing;
 use App\Entity\ListingEvaluation;
 use App\Enum\SearchStatus;
 use App\Message\EvaluateListingMessage;
@@ -11,6 +12,8 @@ use App\Repository\ListingEvaluationRepository;
 use App\Repository\ListingRepository;
 use App\Repository\SearchRequestRepository;
 use App\Service\Ai\ListingEvaluatorAgent;
+use App\Service\Provider\AbstractHttpListingProvider;
+use App\Service\Provider\ListingProviderRegistry;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Lock\LockFactory;
@@ -24,6 +27,7 @@ class EvaluateListingHandler
         private readonly ListingRepository $listingRepository,
         private readonly ListingEvaluationRepository $evaluationRepository,
         private readonly ListingEvaluatorAgent $evaluatorAgent,
+        private readonly ListingProviderRegistry $providerRegistry,
         private readonly EntityManagerInterface $entityManager,
         private readonly LockFactory $lockFactory,
         private readonly LoggerInterface $logger,
@@ -61,6 +65,8 @@ class EvaluateListingHandler
                 return;
             }
 
+            $this->enrichListingDetailsIfMissing($listing);
+
             $resultDto = $this->evaluatorAgent->evaluate($searchRequest, $listing);
 
             $evaluation = new ListingEvaluation(
@@ -93,5 +99,57 @@ class EvaluateListingHandler
         } finally {
             $lock->release();
         }
+    }
+
+    /**
+     * Fetches the full individual listing page once before AI evaluation when the search-results
+     * crawl did not include the seller's real description (e.g. LeBonCoin searchData omits body,
+     * Vinted catalog cards only carry title/brand/condition).
+     */
+    private function enrichListingDetailsIfMissing(Listing $listing): void
+    {
+        $currentDesc = trim((string) ($listing->getDescription() ?? ''));
+        $providerName = strtolower($listing->getProvider());
+
+        $needsDetailFetch = match ($providerName) {
+            'leboncoin' => '' === $currentDesc,
+            'vinted' => '' === $currentDesc || (!str_contains($currentDesc, "\n") && !str_contains($currentDesc, '[Listing details checked')),
+            default => false,
+        };
+
+        if (!$needsDetailFetch) {
+            return;
+        }
+
+        try {
+            $provider = $this->providerRegistry->get($providerName);
+        } catch (\InvalidArgumentException) {
+            return;
+        }
+
+        if (!$provider instanceof AbstractHttpListingProvider) {
+            return;
+        }
+
+        $details = $provider->fetchListingDetails($listing->getUrl());
+        if (null === $details) {
+            return;
+        }
+
+        $enrichedDescription = $details->formatEnrichedDescription($listing->getDescription());
+        if ('vinted' === $providerName && !str_contains($enrichedDescription, "\n") && !str_contains($enrichedDescription, '[Listing details checked')) {
+            $enrichedDescription .= "\n[Listing details checked]";
+        }
+
+        $listing->setDescription($enrichedDescription);
+
+        if (null === $listing->getConditionState() && null !== $details->conditionState) {
+            $listing->setConditionState($details->conditionState);
+        }
+        if ([] === $listing->getImageUrls() && [] !== $details->imageUrls) {
+            $listing->setImageUrls($details->imageUrls);
+        }
+
+        $this->entityManager->flush();
     }
 }

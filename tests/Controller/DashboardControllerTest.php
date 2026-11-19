@@ -133,6 +133,8 @@ final class DashboardControllerTest extends WebTestCase
         self::assertStringContainsString('leboncoin Options', $content);
         self::assertStringContainsString('vinted Options', $content);
         self::assertStringContainsString('Max Ads / Query', $content);
+        // Vision checkbox is greyed out / disabled when model does not support vision
+        self::assertStringContainsString('does not support vision', $content);
 
         // 2. Filter by single category (must_buy)
         $mustBuyCrawler = $client->request('GET', sprintf('/?search=%d&category=must_buy', $searchId));

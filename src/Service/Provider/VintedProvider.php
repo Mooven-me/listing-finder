@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Provider;
 
 use App\Dto\Provider\FetchedListingDto;
+use App\Dto\Provider\ListingDetailsDto;
 use App\Dto\Provider\ProviderOptionDefinition;
 use Symfony\Component\DomCrawler\Crawler;
 
@@ -17,6 +18,72 @@ class VintedProvider extends AbstractHttpListingProvider
     public function getName(): string
     {
         return 'vinted';
+    }
+
+    public function fetchListingDetails(string $url): ?ListingDetailsDto
+    {
+        $cleanUrl = trim($url);
+        if ('' === $cleanUrl || !str_starts_with($cleanUrl, 'http')) {
+            return null;
+        }
+
+        try {
+            $response = $this->httpClient->request('GET', $cleanUrl, [
+                'timeout' => 8.0,
+                'headers' => array_merge($this->defaultHeaders(), [
+                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Referer' => 'https://www.vinted.fr/',
+                ]),
+            ]);
+
+            if (200 !== $response->getStatusCode()) {
+                return null;
+            }
+
+            $html = $response->getContent(false);
+            if ('' === trim($html)) {
+                return null;
+            }
+
+            $description = null;
+            if (1 === preg_match('/"description"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/u', $html, $descMatch)) {
+                $decodedDesc = json_decode('"'.$descMatch[1].'"');
+                if (\is_string($decodedDesc) && '' !== trim($decodedDesc)) {
+                    $description = trim($decodedDesc);
+                }
+            }
+
+            $brand = null;
+            if (1 === preg_match('/"brand_title"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/u', $html, $brandMatch)) {
+                $decodedBrand = json_decode('"'.$brandMatch[1].'"');
+                if (\is_string($decodedBrand) && '' !== trim($decodedBrand)) {
+                    $brand = trim($decodedBrand);
+                }
+            }
+
+            if (null === $description) {
+                $crawler = new Crawler($html, 'https://www.vinted.fr');
+                $meta = $crawler->filter('meta[name="description"]');
+                if ($meta->count() > 0) {
+                    $metaContent = trim((string) $meta->attr('content'));
+                    if ('' !== $metaContent) {
+                        $description = $metaContent;
+                    }
+                }
+            }
+
+            return new ListingDetailsDto(
+                description: $description,
+                brand: $brand,
+            );
+        } catch (\Throwable $e) {
+            $this->logger->debug('Failed to fetch Vinted item details.', [
+                'url' => $cleanUrl,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     /**

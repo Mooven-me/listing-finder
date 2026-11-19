@@ -28,6 +28,16 @@ final class TopicExpansionAgentTest extends TestCase
                     'Vinted Fanless Switch Seller Condition',
                 ]);
             }
+
+            public function supportsVision(): bool
+            {
+                return false;
+            }
+
+            public function getVisionModelName(): string
+            {
+                return 'test-model';
+            }
         };
 
         $agent = new TopicExpansionAgent($llm, new NullLogger());
@@ -70,6 +80,16 @@ final class TopicExpansionAgentTest extends TestCase
                     'A3600 printer',
                     'Canon printer in',
                 ]);
+            }
+
+            public function supportsVision(): bool
+            {
+                return false;
+            }
+
+            public function getVisionModelName(): string
+            {
+                return 'test-model';
             }
         };
 

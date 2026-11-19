@@ -9,6 +9,10 @@ use Symfony\Component\Validator\Constraints as Assert;
 
 final readonly class ListingEvaluationResultDto
 {
+    /**
+     * @param list<string> $matchedSpecs
+     * @param list<string> $missingOrUnverifiedSpecs
+     */
     public function __construct(
         #[Assert\Range(min: 0, max: 100)]
         public int $score = 50,
@@ -30,6 +34,12 @@ final readonly class ListingEvaluationResultDto
         public ?string $estimatedAge = null,
         #[Assert\NotBlank]
         public string $reasoning = 'Evaluated based on listing attributes.',
+        #[SerializedName('matched_specs')]
+        public array $matchedSpecs = [],
+        #[SerializedName('missing_or_unverified_specs')]
+        public array $missingOrUnverifiedSpecs = [],
+        #[SerializedName('is_wrong_product_or_accessory')]
+        public bool $isWrongProductOrAccessory = false,
         public bool $imageAnalyzed = false,
     ) {
     }
@@ -45,6 +55,9 @@ final readonly class ListingEvaluationResultDto
             isWorking: $this->isWorking,
             estimatedAge: $this->estimatedAge,
             reasoning: $this->reasoning,
+            matchedSpecs: $this->matchedSpecs,
+            missingOrUnverifiedSpecs: $this->missingOrUnverifiedSpecs,
+            isWrongProductOrAccessory: $this->isWrongProductOrAccessory,
             imageAnalyzed: $imageAnalyzed,
         );
     }

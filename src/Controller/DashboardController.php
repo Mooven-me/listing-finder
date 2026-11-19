@@ -15,6 +15,7 @@ use App\Message\EvaluateListingMessage;
 use App\Repository\ListingEvaluationRepository;
 use App\Repository\ListingRepository;
 use App\Repository\SearchRequestRepository;
+use App\Service\Ai\LlmClientInterface;
 use App\Service\Ai\TopicExpansionAgent;
 use App\Service\Dashboard\DashboardAnalyticsService;
 use App\Service\Provider\ListingProviderRegistry;
@@ -38,6 +39,7 @@ class DashboardController extends AbstractController
         private readonly ListingEvaluationRepository $evaluationRepository,
         private readonly DashboardAnalyticsService $analyticsService,
         private readonly TopicExpansionAgent $topicExpansionAgent,
+        private readonly LlmClientInterface $llmClient,
         private readonly ListingProviderRegistry $providerRegistry,
         private readonly SearchDispatcherService $searchDispatcher,
         private readonly MessageBusInterface $messageBus,
@@ -106,6 +108,8 @@ class DashboardController extends AbstractController
             'grouped_evaluations' => $groupedEvaluations,
             'available_providers' => $this->providerRegistry->getAvailableProviderNames(),
             'provider_option_schemas' => $this->providerRegistry->getOptionSchemas(),
+            'vision_supported' => $this->llmClient->supportsVision(),
+            'vision_model' => $this->llmClient->getVisionModelName(),
         ]);
     }
 
@@ -194,7 +198,7 @@ class DashboardController extends AbstractController
             topic: $rawSpecification,
             targetPrice: (float) $request->request->get('target_price', 50),
             subTopicsCount: $subTopicsCount,
-            enableImages: (bool) $request->request->get('enable_images', false),
+            enableImages: $this->llmClient->supportsVision() && (bool) $request->request->get('enable_images', false),
             limitPerSubTopic: $limitPerSubTopic,
             intervalMinutes: max(5, min(1440, (int) $request->request->get('interval', 30))),
             providers: $providers,

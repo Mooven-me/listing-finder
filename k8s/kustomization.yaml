@@ -6,6 +6,7 @@ namespace: listing-finder
 resources:
   - namespace.yaml
   - configmap.yaml
+  - searxng.yaml
   - deployment-web.yaml
   - deployment-worker.yaml
   - service.yaml

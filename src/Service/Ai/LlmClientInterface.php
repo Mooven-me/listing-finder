@@ -23,4 +23,8 @@ interface LlmClientInterface
         string $dtoClass,
         array $base64Images = [],
     ): object;
+
+    public function supportsVision(): bool;
+
+    public function getVisionModelName(): string;
 }

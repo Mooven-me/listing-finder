@@ -38,6 +38,14 @@ services:
     healthcheck:
       disable: true
 
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+
 # Mercure is installed as a Caddy module, prevent the Flex recipe from installing another service
 ###> symfony/mercure-bundle ###
 ###< symfony/mercure-bundle ###

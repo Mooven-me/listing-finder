@@ -213,6 +213,37 @@ final class LeBonCoinProviderTest extends TestCase
         self::assertStringContainsString('www.leboncoin.fr/recherche', $capturedUrls[0]);
     }
 
+    public function testFetchListingDetailsExtractsRealAdBodyAndAttributes(): void
+    {
+        $payload = [
+            'props' => [
+                'pageProps' => [
+                    'ad' => [
+                        'subject' => 'Switch Linksys LGS326',
+                        'body' => '24 ports 1Gbps + 2 SFP, parfait état.',
+                        'category_name' => 'Accessoires informatique',
+                        'brand' => 'Linksys',
+                        'attributes' => [
+                            ['key' => 'condition', 'key_label' => 'État', 'value_label' => 'Très bon état', 'generic' => true],
+                            ['key' => 'product', 'key_label' => 'Produit', 'value_label' => 'Réseau et modem', 'generic' => true],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+        $html = sprintf('<!doctype html><html><body><script id="__NEXT_DATA__" type="application/json">%s</script></body></html>', (string) json_encode($payload));
+
+        $provider = $this->createProvider(new MockHttpClient([new MockResponse($html)]));
+        $details = $provider->fetchListingDetails('https://www.leboncoin.fr/ad/ordinateurs/3166185125');
+
+        self::assertNotNull($details);
+        self::assertSame('24 ports 1Gbps + 2 SFP, parfait état.', $details->description);
+        self::assertSame('Accessoires informatique', $details->categoryName);
+        self::assertSame('Linksys', $details->brand);
+        self::assertSame('Très bon état', $details->conditionState);
+        self::assertStringContainsString('Category: Accessoires informatique', $details->formatEnrichedDescription());
+    }
+
     private function createProvider(MockHttpClient $httpClient, int $maxUnlimitedPages = 15): LeBonCoinProvider
     {
         $geocoder = new FrenchGeocoderService($httpClient, new ArrayAdapter(), new NullLogger());

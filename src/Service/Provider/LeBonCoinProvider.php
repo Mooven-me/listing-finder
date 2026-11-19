@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Provider;
 
 use App\Dto\Provider\FetchedListingDto;
+use App\Dto\Provider\ListingDetailsDto;
 use App\Dto\Provider\ProviderOptionDefinition;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
@@ -43,6 +44,107 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
     public function getName(): string
     {
         return 'leboncoin';
+    }
+
+    public function fetchListingDetails(string $url): ?ListingDetailsDto
+    {
+        $cleanUrl = trim($url);
+        if ('' === $cleanUrl || !str_starts_with($cleanUrl, 'http')) {
+            return null;
+        }
+
+        try {
+            $response = $this->httpClient->request('GET', $cleanUrl, [
+                'timeout' => 8.0,
+                'headers' => $this->defaultHeaders(),
+            ]);
+
+            if (200 !== $response->getStatusCode()) {
+                return null;
+            }
+
+            $html = $response->getContent(false);
+            if ('' === trim($html)) {
+                return null;
+            }
+
+            $crawler = new Crawler($html, 'https://www.leboncoin.fr');
+            $nextDataNode = $crawler->filter('script#__NEXT_DATA__');
+            if (0 === $nextDataNode->count()) {
+                return null;
+            }
+
+            /** @var mixed $decoded */
+            $decoded = $this->decoder->decode($nextDataNode->text(''), 'json');
+            if (!\is_array($decoded)) {
+                return null;
+            }
+
+            $ad = $decoded['props']['pageProps']['ad']
+                ?? $decoded['props']['pageProps']['initialProps']['ad']
+                ?? null;
+
+            if (!\is_array($ad)) {
+                return null;
+            }
+
+            $body = isset($ad['body']) && \is_string($ad['body']) && '' !== trim($ad['body'])
+                ? trim($ad['body'])
+                : null;
+            $categoryName = isset($ad['category_name']) && \is_string($ad['category_name']) && '' !== trim($ad['category_name'])
+                ? trim($ad['category_name'])
+                : null;
+            $brand = isset($ad['brand']) && \is_string($ad['brand']) && '' !== trim($ad['brand'])
+                ? trim($ad['brand'])
+                : null;
+
+            $condition = null;
+            $attributes = [];
+            if (isset($ad['attributes']) && \is_array($ad['attributes'])) {
+                foreach ($ad['attributes'] as $attr) {
+                    if (!\is_array($attr)) {
+                        continue;
+                    }
+                    $key = isset($attr['key']) && \is_string($attr['key']) ? $attr['key'] : '';
+                    $keyLabel = isset($attr['key_label']) && \is_string($attr['key_label']) ? trim($attr['key_label']) : '';
+                    $valueLabel = isset($attr['value_label']) && \is_string($attr['value_label']) ? trim($attr['value_label']) : '';
+                    $isGeneric = (bool) ($attr['generic'] ?? false);
+
+                    if ('condition' === $key && '' !== $valueLabel) {
+                        $condition = $valueLabel;
+                    }
+
+                    if ($isGeneric && '' !== $keyLabel && '' !== $valueLabel) {
+                        $attributes[$keyLabel] = $valueLabel;
+                    }
+                }
+            }
+
+            $images = [];
+            if (isset($ad['images']['urls']) && \is_array($ad['images']['urls'])) {
+                foreach ($ad['images']['urls'] as $imgUrl) {
+                    if (\is_string($imgUrl) && '' !== $imgUrl) {
+                        $images[] = $imgUrl;
+                    }
+                }
+            }
+
+            return new ListingDetailsDto(
+                description: $body,
+                categoryName: $categoryName,
+                brand: $brand,
+                attributes: $attributes,
+                conditionState: $condition,
+                imageUrls: $images,
+            );
+        } catch (\Throwable $e) {
+            $this->logger->debug('Failed to fetch LeBonCoin ad details.', [
+                'url' => $cleanUrl,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     /**
@@ -511,7 +613,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 title: $title,
                 price: $priceValue,
                 url: isset($ad['url']) && \is_string($ad['url']) ? $ad['url'] : sprintf('https://www.leboncoin.fr/ad/%s', $externalId),
-                description: isset($ad['body']) && \is_string($ad['body']) ? $ad['body'] : null,
+                description: isset($ad['body']) && \is_string($ad['body']) && '' !== trim($ad['body']) ? trim($ad['body']) : null,
                 currency: 'EUR',
                 imageUrls: $images,
                 conditionState: $condition,

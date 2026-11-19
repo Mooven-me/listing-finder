@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Provider;
 
 use App\Dto\Provider\FetchedListingDto;
+use App\Dto\Provider\ListingDetailsDto;
 use App\Dto\Provider\ProviderOptionDefinition;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
@@ -31,6 +32,15 @@ abstract class AbstractHttpListingProvider implements ListingProviderInterface
     public function getOptionDefinitions(): array
     {
         return [];
+    }
+
+    /**
+     * Optional per-listing detail page fetch used before AI evaluation when search-result
+     * pages omit the seller's full description or structured attributes.
+     */
+    public function fetchListingDetails(string $url): ?ListingDetailsDto
+    {
+        return null;
     }
 
     /**
