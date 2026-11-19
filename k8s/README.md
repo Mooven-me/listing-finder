@@ -1,6 +1,6 @@
 # Deploying Listing Finder on Kubernetes (k3s + Traefik)
 
-This folder contains the Kubernetes manifests to deploy **Listing Finder** (FrankenPHP web dashboard + Symfony Messenger/Scheduler worker) on a k3s cluster using the built-in Traefik ingress controller and your shared in-cluster PostgreSQL service (`postgres-postgresql.postgres.svc.cluster.local`).
+This folder contains the Kubernetes manifests to deploy **Listing Finder** (FrankenPHP web dashboard, Symfony Messenger/Scheduler worker, and an internal **SearXNG** instance for domain-agnostic product datasheet lookups) on a k3s cluster using the built-in Traefik ingress controller and your shared in-cluster PostgreSQL service (`postgres-postgresql.postgres.svc.cluster.local`).
 
 ## 1. Build & Import the Production Image into k3s
 
@@ -24,8 +24,10 @@ kubectl apply -f k8s/secret.local.yaml
 
 ```bash
 kubectl apply -k k8s/
+kubectl -n listing-finder rollout restart deployment/listing-finder-web deployment/listing-finder-worker
 kubectl -n listing-finder rollout status deployment/listing-finder-web
 kubectl -n listing-finder rollout status deployment/listing-finder-worker
+kubectl -n listing-finder rollout status deployment/searxng
 ```
 
 ## 4. Access the Dashboard

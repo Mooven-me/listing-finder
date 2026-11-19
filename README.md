@@ -8,23 +8,25 @@
 
 1. **Domain-Agnostic AI Search Expansion (`TopicExpansionAgent`)**:
    - Describe any item in a single unified **Product Specification** box — whether an exact model (e.g. `"canon printer ax380"`) or a detailed multi-sentence functional specification.
-   - The AI automatically expands your description into multiple realistic marketplace search titles/scopes (seller synonyms, French & English phrasings, and matching product models). You can let the AI choose the optimal number of search queries (`Auto`) or specify an exact count (`1` to `15`).
-2. **Multi-Marketplace Relevance Search, Multi-Page Crawling & Per-Provider Filters (`LeBonCoinProvider`, `VintedProvider`, `BackMarketProvider`)**:
+   - The AI automatically expands your description into concise, high-recall 2–3 word marketplace search queries (seller synonyms, French & English phrasings, exact model-code preservation, and automatic 2-word anchors for strict-AND search engines). You can let the AI choose the optimal number of search queries (`Auto`) or specify an exact count (`1` to `15`).
+2. **Multi-Marketplace Relevance Search, Multi-Page Crawling & Full Ad Detail Scraping (`LeBonCoinProvider`, `VintedProvider`, `BackMarketProvider`)**:
    - Uses each marketplace's native **relevance ranking** by default (matching what you see when typing directly in the site's search bar), with optional sort overrides (`newest`, `price_asc`).
    - Supports **Unlimited multi-page crawling** (`Max Ads / Query` left blank in UI or `--unlimited` in CLI) to crawl across pages up to a configurable safety cap (`LISTING_PROVIDER_MAX_UNLIMITED_PAGES=15`).
+   - Lazily fetches each listing's individual detail page once before AI evaluation (extracting full LeBonCoin seller descriptions, categories, brands, and structured attributes, plus full Vinted seller descriptions) so the AI never evaluates blind from a title alone.
    - **DRY self-describing Per-Provider Options**:
      - **LeBonCoin**: `Allow Nationwide Shipping` (default on via `shipping_type=...`), `Allow Near Me` (city/postal code geocoded via `api-adresse.data.gouv.fr` + configurable radius km; enabling BOTH runs a deduplicated **UNION** of shippable ads nationwide + local pickup ads near you), `Match Keywords in Title Only`, `Seller Type` (`all`/`private`/`pro`), `Search Ranking`, and `Min Price`.
      - **Vinted**: `Search Ranking` (`relevance`/`newest_first`/`price_low_to_high`), `Minimum Condition` (`status_ids[]`), and `Min Price`.
    - Asynchronous fetching via **Symfony Messenger** with deduplication (`uniq_listing_search_provider_external_id`) and concurrency safety (`symfony/lock`).
-3. **Strict 5-Tier AI Technical Appraisal (`ListingEvaluatorAgent`)**:
-   - Evaluates each listing on **Relevance** (45%), **Price vs. Target Budget** (25%), **Working Condition** (20%), and **Product Age** (10%), with optional **Vision AI** photo inspection.
-   - Understands semantic and technical equivalence while strictly penalizing wrong items/accessories (`<= 10`), broken/HS items (`<= 15`), missing mandatory specifications (`<= 29`), and overpriced listings.
+3. **Evidence-Grounded 5-Tier AI Appraisal + SearXNG Spec Enrichment (`ListingEvaluatorAgent`, `SearxngProductSpecService`)**:
+   - Evaluates each listing using **reasoning-first structured JSON** on **Relevance** (45%), **Price vs. Target Budget** (25%), **Working Condition** (20%), and **Product Age** (10%), with automatic **Vision AI** capability detection via Ollama `/api/show` (automatically disabled and greyed out in the UI if the configured model is text-only).
+   - Optionally queries a self-hosted **SearXNG** instance (`SEARXNG_BASE_URL`, cached 7 days) whenever a listing title names a concrete product model code, injecting factual datasheet snippets into the appraisal so the AI verifies real product specs instead of guessing.
+   - Enforces strict anti-hallucination guardrails: requires verified evidence for mandatory buyer requirements, caps wrong items/accessories (`<= 10`), broken/HS items (`<= 15`), missing/unverified mandatory specifications (`<= 45` / `<= 29`), and overpriced listings.
    - Classifies every listing into 5 tiers (`DealCategory`):
      - **MUST BUY (`90–100`)**: Rare, exact specification match, functional, at or below target price.
      - **EXTREMELY GOOD (`70–89`)**: Matches all key specifications, functional, strong price.
      - **GOOD (`50–69`)**: Matches main product and most specs, acceptable price/wear.
-     - **BAD (`30–49`)**: Overpriced, missing secondary features, or poor condition.
-     - **POOR (`0–29`)**: Wrong item/accessory only (`0–10`), defective/HS (`0–15`), or missing mandatory specifications (`10–29`).
+     - **BAD (`30–49`)**: Overpriced, missing secondary features, or 1 unverified mandatory spec.
+     - **POOR (`0–29`)**: Wrong item/accessory only (`0–10`), defective/HS (`0–15`), or contradicted/missing mandatory specifications (`10–29`).
 4. **30-Minute Incremental Cron Radar (`CronTask` + `symfony/scheduler`)**:
    - Automatically re-queries enabled marketplaces every 30 minutes (or custom interval) and only evaluates newly discovered ads (`isComputed = false`).
 5. **Live Web Dashboard (`DashboardController` + Twig + Chart.js)**:
@@ -36,7 +38,7 @@
 
 Access the dashboard at `/` (e.g. `https://listing-finder.zt.home.arpa/` or `https://localhost/`):
 
-- **New Search Request Modal**: Single large **Product Specification & Requirements** textarea, **Target Price (EUR)**, **AI Searches Count** (`Auto` or `1–15`), **Max Ads / Query** (leave blank for **Unlimited** multi-page crawl), **Cron Interval**, **Providers**, dynamic per-provider option cards (LeBonCoin shipping + near-me location/radius, title-only, seller type; Vinted sort, min condition, min price), and **Vision AI** toggle.
+- **New Search Request Modal**: Single large **Product Specification & Requirements** textarea, **Target Price (EUR)**, **AI Searches Count** (`Auto` or `1–15`), **Max Ads / Query** (leave blank for **Unlimited** multi-page crawl), **Cron Interval**, **Providers**, dynamic per-provider option cards (LeBonCoin shipping + near-me location/radius, title-only, seller type; Vinted sort, min condition, min price), and **Vision AI** toggle (automatically disabled/greyed out when the active Ollama model lacks vision support).
 - **Filter & Sort Toolbar**:
   - Sort **By Category** (grouped into the 5 tiers) or **By Score** (`100 -> 0`).
   - Filter by a single tier (`Must Buy`, `Ext. Good`, `Good`, `Bad`, `Poor`), provider (`LeBonCoin`, `Vinted`), AI sub-topic pill, keyword search (`q`), max price (`maxPrice`), or functional items only (`onlyWorking`).
@@ -87,8 +89,11 @@ php bin/console messenger:consume scheduler_default async --time-limit=3600 --me
 | `AI_PROVIDER` | `ollama` | `ollama` or `openai` (OpenAI-compatible `/v1/chat/completions`) |
 | `AI_BASE_URL` | `http://host.docker.internal:11434` | Base URL of Ollama or OpenAI server |
 | `AI_MODEL` | `lfm2.5:8b` | Text model for topic expansion & listing evaluation |
-| `AI_VISION_MODEL` | `lfm2.5:8b` | Vision model when `enableImages` is enabled |
+| `AI_VISION_MODEL` | `lfm2.5:8b` | Vision model when `enableImages` is enabled (auto-probed via Ollama `/api/show`) |
 | `AI_TIMEOUT` | `120` | LLM request timeout in seconds |
+| `AI_NUM_CTX` | `8192` | Ollama runtime context window (`options.num_ctx`, no custom Modelfile needed) |
+| `SEARXNG_BASE_URL` | `http://searxng:8080` | Internal SearXNG URL for model datasheet/spec lookups (leave empty to disable) |
+| `SEARXNG_TIMEOUT` | `8` | SearXNG HTTP lookup timeout in seconds |
 | `LISTING_PROVIDERS_ENABLED` | `leboncoin,vinted,backmarket` | Default enabled marketplace providers |
 | `LISTING_PROVIDER_FALLBACK_TO_MOCK` | `false` (prod) / `true` (dev/test) | Whether HTTP failures fall back to `MockListingProvider` |
 | `LISTING_PROVIDER_MAX_UNLIMITED_PAGES` | `15` | Safety page cap per query when crawling in Unlimited mode |
@@ -98,14 +103,14 @@ php bin/console messenger:consume scheduler_default async --time-limit=3600 --me
 ## Deployment
 
 ### 1. Local Development (Docker Compose)
-In development, `compose.yaml` + `compose.override.yaml` automatically start FrankenPHP (`php`), the Messenger consumer (`worker`), and a local PostgreSQL container (`database`):
+In development, `compose.yaml` + `compose.override.yaml` automatically start FrankenPHP (`php`), the Messenger consumer (`worker`), `searxng`, and a local PostgreSQL container (`database`):
 
 ```bash
 docker compose up -d
 ```
 
 ### 2. Production with Docker Compose (External Shared Database)
-`compose.yaml` + `compose.prod.yaml` run only `php` and `worker` (no local database container is created), reading `.env.prod`:
+`compose.yaml` + `compose.prod.yaml` run `php`, `worker`, and `searxng` (no local database container is created), reading `.env.prod`:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml build
@@ -113,11 +118,13 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d
 ```
 
 ### 3. Production on Kubernetes (k3s + Traefik)
-See [k8s/README.md](file:///home/mooven/projet/listing-finder/k8s/README.md) for full details:
+See [k8s/README.md](file:///home/mooven/projet/listing-finder/k8s/README.md) for full details (includes in-cluster `searxng` deployment):
 
 ```bash
 docker build --target frankenphp_prod -t listing-finder:prod .
 docker save listing-finder:prod | sudo k3s ctr images import -
 kubectl apply -k k8s/
+kubectl -n listing-finder rollout restart deployment/listing-finder-web deployment/listing-finder-worker
 kubectl -n listing-finder rollout status deployment/listing-finder-web
+kubectl -n listing-finder rollout status deployment/listing-finder-worker
 ```
