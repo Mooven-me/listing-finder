@@ -86,6 +86,32 @@ final class VintedProviderTest extends TestCase
         self::assertSame('1026', $results[25]->externalId);
     }
 
+    public function testValidSsrZeroResultsDoesNotCallApiFallback(): void
+    {
+        $capturedUrls = [];
+
+        $httpClient = new MockHttpClient(function (string $method, string $url) use (&$capturedUrls): MockResponse {
+            $capturedUrls[] = sprintf('%s %s', $method, $url);
+
+            return new MockResponse('<!doctype html><html><body><div class="catalog-empty">Aucun resultat</div></body></html>');
+        });
+
+        $provider = new VintedProvider(
+            httpClient: $httpClient,
+            logger: new NullLogger(),
+            mockListingProvider: new MockListingProvider(),
+            decoder: new JsonEncoder(),
+            fallbackToMock: false,
+            maxUnlimitedPages: 5,
+        );
+
+        $results = $provider->search('very obscure nonexistent item', 50.0, 20, []);
+
+        self::assertSame([], $results);
+        self::assertCount(1, $capturedUrls);
+        self::assertStringContainsString('www.vinted.fr/catalog', $capturedUrls[0]);
+    }
+
     private function buildCatalogHtml(int $startIndex, int $count): string
     {
         $itemsHtml = '';

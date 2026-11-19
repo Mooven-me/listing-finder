@@ -44,7 +44,9 @@ class DashboardAnalyticsService
 
         $queuedMessages = 0;
         try {
-            $queuedMessages = (int) $this->entityManager->getConnection()->fetchOne('SELECT COUNT(*) FROM messenger_messages');
+            $queuedMessages = (int) $this->entityManager->getConnection()->fetchOne(
+                "SELECT COUNT(*) FROM messenger_messages WHERE queue_name != 'failed'",
+            );
         } catch (\Throwable) {
             $queuedMessages = 0;
         }

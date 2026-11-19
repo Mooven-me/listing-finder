@@ -193,6 +193,26 @@ final class LeBonCoinProviderTest extends TestCase
         self::assertSame(['2001', '2002', '2003'], array_map(static fn ($d): string => $d->externalId, $results));
     }
 
+    public function testValidSsrZeroResultsDoesNotCallBlockedApiFallback(): void
+    {
+        $capturedUrls = [];
+
+        $httpClient = new MockHttpClient(function (string $method, string $url) use (&$capturedUrls): MockResponse {
+            $capturedUrls[] = sprintf('%s %s', $method, $url);
+
+            return new MockResponse($this->buildNextDataHtml([], maxPages: 0));
+        });
+
+        $provider = $this->createProvider($httpClient);
+        $results = $provider->search('very obscure nonexistent item', 50.0, 20, [
+            'allow_shipping' => true,
+        ]);
+
+        self::assertSame([], $results);
+        self::assertCount(1, $capturedUrls);
+        self::assertStringContainsString('www.leboncoin.fr/recherche', $capturedUrls[0]);
+    }
+
     private function createProvider(MockHttpClient $httpClient, int $maxUnlimitedPages = 15): LeBonCoinProvider
     {
         $geocoder = new FrenchGeocoderService($httpClient, new ArrayAdapter(), new NullLogger());

@@ -82,6 +82,12 @@ class DashboardController extends AbstractController
         if (null !== $activeSearch) {
             $allEvaluations = $this->evaluationRepository->findForSearchRequest($activeSearch);
             $analytics = $this->analyticsService->buildSearchAnalytics($activeSearch, $allEvaluations);
+
+            if ($this->shouldMarkSearchCompleted($activeSearch, $analytics, (int) $globalStats['queued_messages'])) {
+                $activeSearch->setStatus(SearchStatus::Completed);
+                $this->entityManager->flush();
+            }
+
             $pagination = $this->evaluationRepository->findFilteredPaginatedForDashboard($activeSearch, $filter);
 
             foreach ($pagination['items'] as $eval) {
@@ -115,7 +121,7 @@ class DashboardController extends AbstractController
         $allEvaluations = $this->evaluationRepository->findForSearchRequest($searchRequest);
         $analytics = $this->analyticsService->buildSearchAnalytics($searchRequest, $allEvaluations);
 
-        if ($analytics['total_stored_ads'] > 0 && $analytics['total_evaluated_ads'] >= $analytics['total_stored_ads'] && SearchStatus::Completed !== $searchRequest->getStatus()) {
+        if ($this->shouldMarkSearchCompleted($searchRequest, $analytics, (int) $globalStats['queued_messages'])) {
             $searchRequest->setStatus(SearchStatus::Completed);
             $this->entityManager->flush();
         }
@@ -369,5 +375,27 @@ class DashboardController extends AbstractController
         }
 
         return $this->redirectToRoute('app_dashboard');
+    }
+
+    /**
+     * @param array<string, mixed> $analytics
+     */
+    private function shouldMarkSearchCompleted(SearchRequest $searchRequest, array $analytics, int $queuedMessages): bool
+    {
+        if (SearchStatus::Completed === $searchRequest->getStatus()) {
+            return false;
+        }
+
+        $totalStored = (int) ($analytics['total_stored_ads'] ?? 0);
+        $totalEvaluated = (int) ($analytics['total_evaluated_ads'] ?? 0);
+        if ($totalEvaluated < $totalStored) {
+            return false;
+        }
+
+        if ($totalStored > 0) {
+            return true;
+        }
+
+        return SearchStatus::Processing === $searchRequest->getStatus() && 0 === $queuedMessages;
     }
 }

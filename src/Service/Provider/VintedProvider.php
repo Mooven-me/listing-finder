@@ -102,12 +102,22 @@ class VintedProvider extends AbstractHttpListingProvider
 
         try {
             // 1. Primary: Crawl Vinted SSR catalog HTML across pages
-            $webListings = $this->crawlCatalogPages($queryParams, $effectiveLimit);
+            $ssrSucceeded = false;
+            $webListings = $this->crawlCatalogPages($queryParams, $effectiveLimit, $ssrSucceeded);
             if ([] !== $webListings) {
                 return $webListings;
             }
 
-            // 2. Fallback to JSON API v2 if HTML returned no items
+            if ($ssrSucceeded) {
+                $this->logger->info('Provider {provider} SSR returned 0 listings for query "{query}".', [
+                    'provider' => $this->getName(),
+                    'query' => $cleanQuery,
+                ]);
+
+                return [];
+            }
+
+            // 2. Fallback to JSON API v2 ONLY if HTML crawl itself failed
             $apiQueryParams = $queryParams;
             $apiQueryParams['per_page'] = $effectiveLimit ?? 25;
 
@@ -185,7 +195,7 @@ class VintedProvider extends AbstractHttpListingProvider
      *
      * @return list<FetchedListingDto>
      */
-    private function crawlCatalogPages(array $queryParams, ?int $limit): array
+    private function crawlCatalogPages(array $queryParams, ?int $limit, bool &$ssrSucceeded = false): array
     {
         $collected = [];
         $seenIds = [];
@@ -221,6 +231,10 @@ class VintedProvider extends AbstractHttpListingProvider
             $html = $webResponse->getContent(false);
             if ('' === trim($html)) {
                 break;
+            }
+
+            if (1 === $page && (str_contains($html, '<body') || str_contains($html, '__next') || str_contains($html, 'catalog'))) {
+                $ssrSucceeded = true;
             }
 
             $remaining = null !== $limit ? ($limit - \count($collected)) : null;

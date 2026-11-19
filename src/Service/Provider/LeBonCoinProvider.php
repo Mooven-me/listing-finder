@@ -141,12 +141,22 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
         $effectiveLimit = (null !== $limit && $limit > 0) ? $limit : null;
 
         try {
-            $webListings = $this->searchViaWeb($cleanQuery, $maxPrice, $effectiveLimit, $opts);
+            $ssrSucceeded = false;
+            $webListings = $this->searchViaWeb($cleanQuery, $maxPrice, $effectiveLimit, $opts, $ssrSucceeded);
             if ([] !== $webListings) {
                 return $webListings;
             }
 
-            // Fallback to JSON API endpoint if web SSR returned nothing
+            if ($ssrSucceeded) {
+                $this->logger->info('Provider {provider} SSR returned 0 listings for query "{query}".', [
+                    'provider' => $this->getName(),
+                    'query' => $cleanQuery,
+                ]);
+
+                return [];
+            }
+
+            // Fallback to JSON API endpoint ONLY if web SSR itself failed (non-200 / missing __NEXT_DATA__)
             $filters = [
                 'keywords' => [
                     'text' => $cleanQuery,
@@ -210,7 +220,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
      *
      * @return list<FetchedListingDto>
      */
-    private function searchViaWeb(string $cleanQuery, ?float $maxPrice, ?int $limit, array $opts): array
+    private function searchViaWeb(string $cleanQuery, ?float $maxPrice, ?int $limit, array $opts, bool &$ssrSucceeded = false): array
     {
         $allowShipping = (bool) ($opts['allow_shipping'] ?? true);
         $allowNearMe = (bool) ($opts['allow_near_me'] ?? false);
@@ -263,6 +273,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 array_merge($baseQueryParams, $passParams),
                 $passLimit,
                 $seenIds,
+                $ssrSucceeded,
             );
 
             foreach ($passResults as $dto) {
@@ -344,7 +355,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
      *
      * @return list<FetchedListingDto>
      */
-    private function crawlWebPages(array $queryParams, ?int $limit, array &$seenIds): array
+    private function crawlWebPages(array $queryParams, ?int $limit, array &$seenIds, bool &$ssrSucceeded = false): array
     {
         $collected = [];
         $maxPages = $this->resolveMaxPages($limit, self::ITEMS_PER_PAGE);
@@ -402,6 +413,8 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
             if (!\is_array($searchData)) {
                 break;
             }
+
+            $ssrSucceeded = true;
 
             // Refine maxPages using LeBonCoin's reported max_pages on page 1
             if (1 === $page && isset($searchData['max_pages']) && is_numeric($searchData['max_pages'])) {

@@ -1121,6 +1121,9 @@
                     const statusBadge = document.getElementById('searchStatusBadge');
                     if (statusBadge && data.status) {
                         statusBadge.textContent = data.status.toUpperCase();
+                        statusBadge.className = 'px-2 py-0.5 rounded border ' + (data.status === 'completed'
+                            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-900'
+                            : 'bg-amber-950/70 text-amber-300 border-amber-900');
                     }
 
                     // Live Cron Metadata

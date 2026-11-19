@@ -86,25 +86,19 @@ final class ConfigurableLlmClient implements LlmClientInterface
         $endpoint = rtrim($this->baseUrl, '/').'/api/chat';
 
         try {
-            $response = $this->httpClient->request('POST', $endpoint, [
-                'timeout' => $this->timeout,
-                'json' => [
-                    'model' => $model,
-                    'stream' => false,
-                    'format' => $this->resolveOllamaFormat($dtoClass),
-                    'messages' => [
-                        [
-                            'role' => 'system',
-                            'content' => $systemPrompt,
-                        ],
-                        $userMessage,
-                    ],
-                ],
-            ]);
-
-            $payload = $response->toArray();
+            $payload = $this->sendOllamaChatRequest($endpoint, $model, $systemPrompt, $userMessage, $dtoClass);
         } catch (\Throwable $e) {
-            throw new \RuntimeException(sprintf('Ollama request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
+            // If a text-only model rejects attached images (HTTP 400), retry cleanly without images.
+            if ([] !== $base64Images && isset($userMessage['images'])) {
+                unset($userMessage['images']);
+                try {
+                    $payload = $this->sendOllamaChatRequest($endpoint, $model, $systemPrompt, $userMessage, $dtoClass);
+                } catch (\Throwable $retryError) {
+                    throw new \RuntimeException(sprintf('Ollama request to "%s" failed: %s', $endpoint, $retryError->getMessage()), 0, $retryError);
+                }
+            } else {
+                throw new \RuntimeException(sprintf('Ollama request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
+            }
         }
 
         $content = $payload['message']['content'] ?? null;
@@ -113,6 +107,43 @@ final class ConfigurableLlmClient implements LlmClientInterface
         }
 
         return $content;
+    }
+
+    /**
+     * @param array<string, mixed> $userMessage
+     *
+     * @return array<string, mixed>
+     */
+    private function sendOllamaChatRequest(
+        string $endpoint,
+        string $model,
+        string $systemPrompt,
+        array $userMessage,
+        string $dtoClass,
+    ): array {
+        $response = $this->httpClient->request('POST', $endpoint, [
+            'timeout' => $this->timeout,
+            'json' => [
+                'model' => $model,
+                'stream' => false,
+                'options' => [
+                    'temperature' => 0.2,
+                ],
+                'format' => $this->resolveOllamaFormat($dtoClass),
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => $systemPrompt,
+                    ],
+                    $userMessage,
+                ],
+            ],
+        ]);
+
+        /** @var array<string, mixed> $payload */
+        $payload = $response->toArray();
+
+        return $payload;
     }
 
     /**
@@ -237,6 +268,7 @@ final class ConfigurableLlmClient implements LlmClientInterface
                 'headers' => $headers,
                 'json' => [
                     'model' => $model,
+                    'temperature' => 0.2,
                     'response_format' => ['type' => 'json_object'],
                     'messages' => [
                         [

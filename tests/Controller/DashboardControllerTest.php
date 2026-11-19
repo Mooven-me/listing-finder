@@ -158,5 +158,24 @@ final class DashboardControllerTest extends WebTestCase
         self::assertSame(1, $statusPayload['must_buy_count']);
         self::assertSame(1, $statusPayload['extremely_good_count']);
         self::assertSame(100, $statusPayload['progress_percent']);
+
+        // 5. Processing search with 0 stored ads and empty queue transitions cleanly to Completed
+        $emptySearch = new SearchRequest(
+            topic: 'rare empty query test',
+            targetPrice: 40.0,
+            enableImages: false,
+            enabledProviders: ['leboncoin'],
+        );
+        $emptySearch->setGeneratedSubTopics(['rare empty']);
+        $emptySearch->setStatus(SearchStatus::Processing);
+        $em->persist($emptySearch);
+        $em->flush();
+
+        $client->request('GET', sprintf('/api/dashboard/status/%d', (int) $emptySearch->getId()));
+        self::assertResponseIsSuccessful();
+        $emptyStatus = json_decode((string) $client->getResponse()->getContent(), true);
+        self::assertIsArray($emptyStatus);
+        self::assertSame('completed', $emptyStatus['status']);
+        self::assertSame(0, $emptyStatus['total_ads']);
     }
 }

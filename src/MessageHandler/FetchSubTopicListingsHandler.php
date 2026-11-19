@@ -113,11 +113,20 @@ class FetchSubTopicListingsHandler
             }
         }
 
-        foreach (array_unique($newListingIdsToEvaluate) as $listingId) {
+        $uniqueListingIds = array_unique($newListingIdsToEvaluate);
+        foreach ($uniqueListingIds as $listingId) {
             $this->messageBus->dispatch(new EvaluateListingMessage(
                 searchRequestId: $message->searchRequestId,
                 listingId: $listingId,
             ));
         }
+
+        $this->logger->info('Fetched {fetched} listings from {provider} for search #{searchId} query "{query}" ({queued} queued for evaluation).', [
+            'fetched' => \count($fetchedDtos),
+            'provider' => $message->providerName,
+            'searchId' => $message->searchRequestId,
+            'query' => $message->subTopic,
+            'queued' => \count($uniqueListingIds),
+        ]);
     }
 }
