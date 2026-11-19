@@ -11,6 +11,7 @@ final readonly class TopicExpansionResultDto
 {
     /**
      * @param list<string> $subTopics
+     * @param list<string> $coreProductSynonyms
      */
     public function __construct(
         #[SerializedName('sub_topics')]
@@ -21,6 +22,10 @@ final readonly class TopicExpansionResultDto
             new Assert\NotBlank(),
         ])]
         public array $subTopics = [],
+        #[SerializedName('core_product_noun')]
+        public string $coreProductNoun = '',
+        #[SerializedName('core_product_synonyms')]
+        public array $coreProductSynonyms = [],
     ) {
     }
 }

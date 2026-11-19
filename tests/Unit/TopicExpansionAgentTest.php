@@ -108,4 +108,46 @@ final class TopicExpansionAgentTest extends TestCase
 
         self::assertTrue($hasExactCode, 'Expected exact buyer model code "ax380" to be preserved in sub_topics.');
     }
+
+    public function testCoreProductNounAnchorsBareAttributeQueriesToPreventAccessoryFlood(): void
+    {
+        $llm = new class implements LlmClientInterface {
+            public function generateStructured(
+                string $systemPrompt,
+                string $userPrompt,
+                string $dtoClass,
+                array $base64Images = [],
+            ): object {
+                return new TopicExpansionResultDto(
+                    subTopics: ['SFP+ RJ45', 'SFP+ 10Gbps', '4x RJ45 10Gbps', 'commutateur SFP+'],
+                    coreProductNoun: 'switch',
+                    coreProductSynonyms: ['commutateur'],
+                );
+            }
+
+            public function supportsVision(): bool
+            {
+                return false;
+            }
+
+            public function getVisionModelName(): string
+            {
+                return 'llama-3.1-8b-instant';
+            }
+        };
+
+        $agent = new TopicExpansionAgent($llm, new NullLogger());
+        $result = $agent->expandTopic(
+            'i would like a switch with at least 4 RJ45 1Gbps ports and 2 SFP+ ports, otherwise 4 RJ45 10Gbps ports without SFP+',
+        );
+
+        self::assertNotEmpty($result->subTopics);
+        foreach ($result->subTopics as $query) {
+            $lower = mb_strtolower($query);
+            self::assertTrue(
+                str_contains($lower, 'switch') || str_contains($lower, 'commutateur'),
+                sprintf('Expected query "%s" to contain core product noun "switch" or synonym "commutateur".', $query),
+            );
+        }
+    }
 }

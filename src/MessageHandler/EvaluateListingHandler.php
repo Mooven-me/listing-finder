@@ -56,6 +56,15 @@ class EvaluateListingHandler
                 return;
             }
 
+            if ($listing->isSold()) {
+                if (!$listing->isComputed()) {
+                    $listing->setIsComputed(true);
+                    $this->entityManager->flush();
+                }
+
+                return;
+            }
+
             if ($listing->isComputed() || null !== $this->evaluationRepository->findOneBySearchAndListing($searchRequest, $listing)) {
                 if (!$listing->isComputed()) {
                     $listing->setIsComputed(true);
@@ -65,9 +74,23 @@ class EvaluateListingHandler
                 return;
             }
 
-            $this->enrichListingDetailsIfMissing($listing);
+            // Stage-1 fast product-type gatekeeper runs BEFORE detail-page fetch & SearXNG,
+            // dramatically cutting marketplace HTTP calls and SearXNG traffic for wrong items/accessories.
+            $resultDto = $this->evaluatorAgent->checkCoreProductGatekeeper($searchRequest, $listing);
 
-            $resultDto = $this->evaluatorAgent->evaluate($searchRequest, $listing);
+            if (null === $resultDto) {
+                $isSoldNow = $this->enrichListingDetailsIfMissing($listing);
+                if ($isSoldNow) {
+                    $listing->setIsSold(true);
+                    $listing->setIsComputed(true);
+                    $this->entityManager->flush();
+                    $this->markSearchCompletedIfDone($searchRequest);
+
+                    return;
+                }
+
+                $resultDto = $this->evaluatorAgent->evaluate($searchRequest, $listing, runGatekeeper: false);
+            }
 
             $evaluation = new ListingEvaluation(
                 searchRequest: $searchRequest,
@@ -87,26 +110,32 @@ class EvaluateListingHandler
             $this->entityManager->persist($evaluation);
             $this->entityManager->flush();
 
-            $uncomputedCount = $this->listingRepository->count([
-                'searchRequest' => $searchRequest,
-                'isComputed' => false,
-            ]);
-
-            if (0 === $uncomputedCount) {
-                $searchRequest->setStatus(SearchStatus::Completed);
-                $this->entityManager->flush();
-            }
+            $this->markSearchCompletedIfDone($searchRequest);
         } finally {
             $lock->release();
         }
     }
 
+    private function markSearchCompletedIfDone(\App\Entity\SearchRequest $searchRequest): void
+    {
+        $uncomputedCount = $this->listingRepository->count([
+            'searchRequest' => $searchRequest,
+            'isComputed' => false,
+        ]);
+
+        if (0 === $uncomputedCount) {
+            $searchRequest->setStatus(SearchStatus::Completed);
+            $this->entityManager->flush();
+        }
+    }
+
     /**
-     * Fetches the full individual listing page once before AI evaluation when the search-results
-     * crawl did not include the seller's real description (e.g. LeBonCoin searchData omits body,
-     * Vinted catalog cards only carry title/brand/condition).
+     * Fetches the full individual listing page once before Stage-2 evaluation when the search-results
+     * crawl did not include the seller's real description.
+     *
+     * @return bool true if the detail check detected that the listing is already sold/unavailable
      */
-    private function enrichListingDetailsIfMissing(Listing $listing): void
+    private function enrichListingDetailsIfMissing(Listing $listing): bool
     {
         $currentDesc = trim((string) ($listing->getDescription() ?? ''));
         $providerName = strtolower($listing->getProvider());
@@ -118,22 +147,26 @@ class EvaluateListingHandler
         };
 
         if (!$needsDetailFetch) {
-            return;
+            return false;
         }
 
         try {
             $provider = $this->providerRegistry->get($providerName);
         } catch (\InvalidArgumentException) {
-            return;
+            return false;
         }
 
         if (!$provider instanceof AbstractHttpListingProvider) {
-            return;
+            return false;
         }
 
         $details = $provider->fetchListingDetails($listing->getUrl());
-        if (null === $details) {
-            return;
+        if (null === $details || $details->rateLimited) {
+            return false;
+        }
+
+        if ($details->isSoldOrUnavailable) {
+            return true;
         }
 
         $enrichedDescription = $details->formatEnrichedDescription($listing->getDescription());
@@ -151,5 +184,7 @@ class EvaluateListingHandler
         }
 
         $this->entityManager->flush();
+
+        return false;
     }
 }

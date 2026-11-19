@@ -40,6 +40,10 @@ final readonly class ListingEvaluationResultDto
         public array $missingOrUnverifiedSpecs = [],
         #[SerializedName('is_wrong_product_or_accessory')]
         public bool $isWrongProductOrAccessory = false,
+        #[SerializedName('buyer_requested_product_type')]
+        public string $buyerRequestedProductType = '',
+        #[SerializedName('listing_actual_product_type')]
+        public string $listingActualProductType = '',
         public bool $imageAnalyzed = false,
     ) {
     }
@@ -58,6 +62,8 @@ final readonly class ListingEvaluationResultDto
             matchedSpecs: $this->matchedSpecs,
             missingOrUnverifiedSpecs: $this->missingOrUnverifiedSpecs,
             isWrongProductOrAccessory: $this->isWrongProductOrAccessory,
+            buyerRequestedProductType: $this->buyerRequestedProductType,
+            listingActualProductType: $this->listingActualProductType,
             imageAnalyzed: $imageAnalyzed,
         );
     }

@@ -8,9 +8,15 @@ use App\Enum\DealCategory;
 
 final readonly class DashboardFilterDto
 {
+    public const SORT_CATEGORY = 'category';
+    public const SORT_SCORE = 'score';
+    public const SORT_PRICE_ASC = 'price_asc';
+    public const SORT_PRICE_DESC = 'price_desc';
+    public const SORT_NEWEST = 'newest';
+
     public function __construct(
         public ?int $search = null,
-        public string $sort = 'category',
+        public string $sort = self::SORT_CATEGORY,
         public ?string $category = null,
         public ?string $provider = null,
         public ?string $subTopic = null,
@@ -18,15 +24,33 @@ final readonly class DashboardFilterDto
         public ?float $maxPrice = null,
         public bool $onlyWorking = false,
         public bool $showPoor = false,
+        public bool $onlyNew = false,
+        public bool $showSold = false,
         public string $view = 'cards',
         public int $page = 1,
         public int $perPage = 20,
     ) {
     }
 
+    public function normalizedSort(): string
+    {
+        return match (strtolower(trim($this->sort))) {
+            self::SORT_SCORE => self::SORT_SCORE,
+            self::SORT_PRICE_ASC => self::SORT_PRICE_ASC,
+            self::SORT_PRICE_DESC => self::SORT_PRICE_DESC,
+            self::SORT_NEWEST, 'date', 'date_desc' => self::SORT_NEWEST,
+            default => self::SORT_CATEGORY,
+        };
+    }
+
+    public function isGroupedByCategory(): bool
+    {
+        return self::SORT_CATEGORY === $this->normalizedSort();
+    }
+
     public function isSortByScore(): bool
     {
-        return 'score' === strtolower(trim($this->sort));
+        return self::SORT_SCORE === $this->normalizedSort();
     }
 
     public function isTableView(): bool

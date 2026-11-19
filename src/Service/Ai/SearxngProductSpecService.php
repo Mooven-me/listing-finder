@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Ai;
 
+use App\Service\Provider\ProviderHealthService;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Contracts\Cache\CacheInterface;
@@ -14,12 +15,16 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * Domain-agnostic product specification lookup backed by a self-hosted SearXNG instance.
  *
  * When a listing title names a specific product model/code, queries SearXNG JSON search
- * (cached for 7 days) so the AI evaluator receives factual datasheet snippets instead of guessing.
+ * (cached for 7 days, with 24h negative caching and polite 2s outbound throttling) so the
+ * AI evaluator receives factual datasheet snippets instead of guessing.
  */
 class SearxngProductSpecService
 {
-    private const CACHE_TTL_SECONDS = 604800; // 7 days
-    private const MAX_SNIPPET_CHARS = 1200;
+    private const POSITIVE_CACHE_TTL_SECONDS = 604800; // 7 days
+    private const NEGATIVE_CACHE_TTL_SECONDS = 86400;  // 24 hours
+    private const NEGATIVE_SENTINEL = '__SEARXNG_NO_RESULTS__';
+    private const MAX_SNIPPET_CHARS = 1000;
+    private const MIN_OUTBOUND_INTERVAL_MS = 2000;
 
     /** @var list<string> */
     private const NOISE_WORDS = [
@@ -27,6 +32,7 @@ class SearxngProductSpecService
         'etat', 'état', 'parfait', 'comme', 'avec', 'sans', 'pour', 'dans', 'chez', 'prix',
         'ferme', 'urgent', 'negociable', 'négociable', 'envoi', 'possible', 'boite', 'boîte',
         'cable', 'câble', 'alimentation', 'chargeur', 'notice', 'facture', 'garantie',
+        'dispo', 'unite', 'unité', 'original', 'version',
         'for', 'sale', 'used', 'new', 'good', 'condition', 'working', 'tested', 'with', 'without',
     ];
 
@@ -38,6 +44,7 @@ class SearxngProductSpecService
         private readonly string $baseUrl = '',
         #[Autowire(env: 'int:SEARXNG_TIMEOUT')]
         private readonly int $timeout = 8,
+        private readonly ?ProviderHealthService $providerHealth = null,
     ) {
     }
 
@@ -48,8 +55,7 @@ class SearxngProductSpecService
 
     /**
      * Looks up factual product specifications for a listing title when it appears
-     * to identify a specific product model/code. Returns null when disabled, when
-     * no concrete model identifier is detected, or when SearXNG returns no snippets.
+     * to identify a specific product model/code.
      */
     public function lookupSpecsForTitle(string $listingTitle): ?string
     {
@@ -62,17 +68,26 @@ class SearxngProductSpecService
             return null;
         }
 
-        $cacheKey = 'searxng_spec_'.sha1(mb_strtolower($lookupQuery));
+        $cacheKey = 'searxng_spec_v2_'.sha1(mb_strtolower($lookupQuery));
 
         try {
-            /** @var string|null $cached */
-            $cached = $this->cache->get($cacheKey, function (ItemInterface $item) use ($lookupQuery): ?string {
-                $item->expiresAfter(self::CACHE_TTL_SECONDS);
+            /** @var string $cached */
+            $cached = $this->cache->get($cacheKey, function (ItemInterface $item) use ($lookupQuery): string {
+                $this->providerHealth?->throttle('searxng', self::MIN_OUTBOUND_INTERVAL_MS);
 
-                return $this->querySearxng($lookupQuery);
+                $result = $this->querySearxng($lookupQuery);
+                if (null === $result) {
+                    $item->expiresAfter(self::NEGATIVE_CACHE_TTL_SECONDS);
+
+                    return self::NEGATIVE_SENTINEL;
+                }
+
+                $item->expiresAfter(self::POSITIVE_CACHE_TTL_SECONDS);
+
+                return $result;
             });
 
-            return $cached;
+            return self::NEGATIVE_SENTINEL === $cached ? null : $cached;
         } catch (\Throwable $e) {
             $this->logger->debug('SearXNG spec lookup cache/query failed.', [
                 'query' => $lookupQuery,
@@ -84,9 +99,8 @@ class SearxngProductSpecService
     }
 
     /**
-     * Extracts a compact model lookup query only when the title contains at least one
-     * concrete alphanumeric model/product code (letters + digits, excluding pure measurement units
-     * like 1Gbps, 500W, 40L, 15m, 1000Mbps).
+     * Extracts a compact canonical model lookup query (up to 4 tokens centered on the model code)
+     * only when the title contains a concrete alphanumeric model/product code.
      */
     public function extractModelLookupQuery(string $listingTitle): ?string
     {
@@ -97,10 +111,10 @@ class SearxngProductSpecService
 
         $rawTokens = preg_split('/[\s,\/;|()\[\]]+/', $cleanTitle) ?: [];
         $meaningful = [];
-        $hasModelCode = false;
+        $modelCodeIndex = null;
 
         foreach ($rawTokens as $rawToken) {
-            $token = trim($rawToken, ".,:!?\"'`~*");
+            $token = trim($rawToken, ".,:!?\"'`~*–—-");
             if (mb_strlen($token) < 2) {
                 continue;
             }
@@ -110,19 +124,20 @@ class SearxngProductSpecService
                 continue;
             }
 
-            if ($this->looksLikeProductModelCode($token)) {
-                $hasModelCode = true;
+            if (null === $modelCodeIndex && $this->looksLikeProductModelCode($token)) {
+                $modelCodeIndex = \count($meaningful);
             }
 
             $meaningful[] = $token;
         }
 
-        if (!$hasModelCode || [] === $meaningful) {
+        if (null === $modelCodeIndex || [] === $meaningful) {
             return null;
         }
 
-        // Keep up to 6 concise tokens centered around the model code
-        $selected = \array_slice($meaningful, 0, 6);
+        // Take up to 2 preceding tokens (product/brand) + model code + up to 1 following token (max 4 tokens)
+        $start = max(0, $modelCodeIndex - 2);
+        $selected = \array_slice($meaningful, $start, 4);
 
         return implode(' ', $selected);
     }
@@ -133,22 +148,18 @@ class SearxngProductSpecService
      */
     private function looksLikeProductModelCode(string $token): bool
     {
-        // Must contain at least one letter AND at least one digit
         if (1 !== preg_match('/^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z0-9._-]{3,24}$/', $token)) {
             return false;
         }
 
-        // Exclude common generic measurements/units (e.g. 1Gbps, 1000Mbps, 15m, 40L, 500W, 24V, 2024, Cat6, 4x, 2x)
         if (1 === preg_match('/^\d+(?:[.,]\d+)?(?:gbps|mbps|kbps|gb|go|mb|mo|tb|to|ghz|mhz|hz|w|kw|v|mv|a|ma|mah|wh|mm|cm|m|km|kg|g|mg|ml|cl|l|oz|lb|in|ft|px|mp|fps|db|rpm|x|p|k|st|nd|rd|th)$/i', $token)) {
             return false;
         }
 
-        // Exclude pure cable/standard labels like Cat5, Cat5e, Cat6, Cat6a, Cat7, Cat8, USB3, RJ45, WiFi6
-        if (1 === preg_match('/^(?:cat\d+[a-z]?|rj\d+|usb\d+[a-z]?|wifi\d+[a-z]?|hdmi\d+[a-z]?|ps\d+)$/i', $token)) {
+        if (1 === preg_match('/^(?:cat\d+[a-z]?|rj\d+|usb\d+[a-z]?|wifi\d+[a-z]?|hdmi\d+[a-z]?|ps\d+|gddr\d+[a-z]?|ddr\d+[a-z]?|pcie\d+)$/i', $token)) {
             return false;
         }
 
-        // Real model codes typically start with a letter or have >= 2 letters + digits (e.g. FS605v3, AX380, LGS326, 2960G)
         return 1 === preg_match('/^[a-zA-Z]{1,6}[-._]?\d+[a-zA-Z0-9._-]*$/', $token)
             || 1 === preg_match('/^\d{3,5}[a-zA-Z]{1,4}[a-zA-Z0-9._-]*$/', $token);
     }
@@ -165,7 +176,7 @@ class SearxngProductSpecService
                     'User-Agent' => 'ListingFinder/1.0',
                 ],
                 'query' => [
-                    'q' => sprintf('%s specifications datasheet', $lookupQuery),
+                    'q' => sprintf('%s specifications', $lookupQuery),
                     'format' => 'json',
                     'safesearch' => '0',
                 ],
@@ -203,7 +214,7 @@ class SearxngProductSpecService
                 }
 
                 $line = '' !== $content
-                    ? sprintf('- %s: %s', $title, mb_strimwidth($content, 0, 260, '...'))
+                    ? sprintf('- %s: %s', $title, mb_strimwidth($content, 0, 240, '...'))
                     : sprintf('- %s', $title);
 
                 if ($totalChars + mb_strlen($line) > self::MAX_SNIPPET_CHARS && [] !== $lines) {

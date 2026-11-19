@@ -17,6 +17,8 @@ final readonly class ListingDetailsDto
         public array $attributes = [],
         public ?string $conditionState = null,
         public array $imageUrls = [],
+        public bool $isSoldOrUnavailable = false,
+        public bool $rateLimited = false,
     ) {
     }
 

@@ -15,7 +15,7 @@ final class TopicExpansionAgent
     private const STOP_WORDS = [
         'a', 'an', 'the', 'and', 'or', 'of', 'in', 'on', 'to', 'at', 'by', 'as', 'is', 'are', 'be',
         'with', 'without', 'least', 'most', 'more', 'less', 'than', 'from', 'that', 'this', 'have', 'having', 'for',
-        'looking', 'want', 'need', 'needs', 'very', 'good', 'great', 'best', 'nice',
+        'looking', 'want', 'need', 'needs', 'very', 'good', 'great', 'best', 'nice', 'would', 'like', 'if', 'else', 'otherwise', 'possible', 'only', 'not', 'no', 'minimum', 'maximum', 'any', 'those', 'these', 'here', 'recap', 'recp',
         'avec', 'sans', 'moins', 'plus', 'dans', 'pour', 'une', 'des', 'les', 'aux', 'sur', 'chez', 'comme',
         'tres', 'très', 'bon', 'bonne', 'etat', 'état', 'cherche', 'recherche', 'de', 'du', 'la', 'le', 'un', 'et', 'ou',
     ];
@@ -23,7 +23,7 @@ final class TopicExpansionAgent
     /** @var list<string> */
     private const FORBIDDEN_META_WORDS = [
         'leboncoin', 'vinted', 'backmarket', 'ebay', 'amazon',
-        'specification', 'specifications', 'spec', 'specs',
+        'specification', 'specifications', 'spec', 'specs', 'requirement', 'requirements',
         'review', 'reviews', 'seller', 'sellers', 'buyer',
         'condition', 'included', 'second-hand', 'secondhand',
         'looking', 'wanted', 'buy', 'buying', 'model', 'models',
@@ -33,6 +33,7 @@ final class TopicExpansionAgent
     private const NON_HEAD_NOUN_ATTRIBUTES = [
         'port', 'ports', 'size', 'taille', 'color', 'couleur', 'type', 'version',
         'edition', 'series', 'serie', 'design', 'feature', 'features', 'speed', 'capacity', 'capacite',
+        'vram', 'memory', 'memoire', 'data', 'mandatory', 'optional', 'needed', 'capped',
     ];
 
     public function __construct(
@@ -64,15 +65,20 @@ final class TopicExpansionAgent
 
         $systemPrompt = <<<PROMPT
 You generate short 2-to-3-word marketplace search queries for second-hand classified ads (France and international).
-Classified ad search bars use strict AND matching, so long queries return zero results.
-{$countInstruction}
-Every query MUST contain the main product noun (fixing any spelling typo) plus only 1 or 2 keywords (a key feature, synonym, French/English equivalent, or exact model code from the buyer).
-Never exceed 3 words per query. Never alter alphanumeric model codes from the buyer, never invent unrelated brands or models, and never include meta words (model, specification, specs, condition, reviews, seller, or website names).
-Respond ONLY with valid JSON: {"sub_topics": ["query 1", "query 2", ...]}
+Classified ad search bars use strict AND matching, so long queries return zero results, AND queries without the main product noun return wrong accessories/parts.
+
+STRICT RULES:
+1. First set "core_product_noun" to the SINGLE main product the buyer wants (1-2 words, fixing any spelling typo, e.g. "switch", "GPU", "imprimante", "backpack").
+2. Set "core_product_synonyms" to 0-3 direct synonyms or French/English equivalents of that exact core product (e.g. ["commutateur"], ["carte graphique"]).
+3. {$countInstruction}
+4. EVERY query in "sub_topics" MUST contain "core_product_noun" (or one of "core_product_synonyms") plus ONLY 1 or 2 keywords (a key feature, brand, or exact model code from the buyer).
+5. NEVER output bare feature/attribute queries without the core product noun (e.g. never bare port/spec names alone — that only returns accessories!).
+6. Never exceed 3 words per query. Never alter alphanumeric model codes from the buyer, never invent unrelated brands or models, and never include meta words (model, specification, requirement, condition, reviews, seller, or website names).
+7. Respond ONLY with valid JSON: {"core_product_noun": "...", "core_product_synonyms": ["..."], "sub_topics": ["query 1", "query 2", ...]}
 PROMPT;
 
         $userPrompt = sprintf(
-            "Buyer Product Specification:\n%s\n\n%s Keep every query strictly 2 to 3 words.",
+            "Buyer Product Specification:\n%s\n\n%s Keep every query strictly 2 to 3 words and ALWAYS include the core product noun.",
             $normalizedTopic,
             $countInstruction,
         );
@@ -84,10 +90,20 @@ PROMPT;
                 TopicExpansionResultDto::class,
             );
 
-            $tags = $this->normalizeTags($normalizedTopic, $result->subTopics, false, $maxTags);
-            $tags = $this->ensureHighRecallAnchors($normalizedTopic, $tags, $maxTags);
+            $coreNoun = $this->sanitizeCoreNoun($result->coreProductNoun);
+            $synonyms = array_values(array_filter(array_map(
+                fn (string $s): string => $this->sanitizeCoreNoun($s),
+                $result->coreProductSynonyms,
+            )));
 
-            return new TopicExpansionResultDto($tags);
+            $tags = $this->normalizeTags($normalizedTopic, $result->subTopics, false, $maxTags, $coreNoun, $synonyms);
+            $tags = $this->ensureHighRecallAnchors($normalizedTopic, $tags, $maxTags, $coreNoun, $synonyms);
+
+            return new TopicExpansionResultDto(
+                subTopics: $tags,
+                coreProductNoun: $coreNoun ?? '',
+                coreProductSynonyms: $synonyms,
+            );
         } catch (\Throwable $e) {
             $this->logger->warning('AI topic expansion failed, falling back to deterministic keyword expansion.', [
                 'topic' => $normalizedTopic,
@@ -100,6 +116,7 @@ PROMPT;
 
     /**
      * @param array<int, mixed> $candidateTags
+     * @param list<string>      $synonyms
      *
      * @return list<string>
      */
@@ -108,9 +125,16 @@ PROMPT;
         array $candidateTags,
         bool $prependMainTopic = true,
         int $maxTags = 8,
+        ?string $coreNoun = null,
+        array $synonyms = [],
     ): array {
         $seen = [];
         $normalized = [];
+
+        $allowedNouns = array_values(array_filter(array_merge(
+            null !== $coreNoun ? [$coreNoun] : [],
+            $synonyms,
+        )));
 
         $allCandidates = $prependMainTopic ? array_merge([$mainTopic], $candidateTags) : $candidateTags;
         foreach ($allCandidates as $candidate) {
@@ -121,6 +145,15 @@ PROMPT;
             $clean = $this->sanitizeQuery($candidate);
             if ('' === $clean || mb_strlen($clean) < 2) {
                 continue;
+            }
+
+            // Guarantee every search query includes the core product noun (or synonym) so bare
+            // attribute queries (e.g. "SFP+ RJ45") don't flood marketplaces with accessories/modules.
+            if (null !== $coreNoun && [] !== $allowedNouns && !$this->containsAnyPhrase($clean, $allowedNouns)) {
+                $clean = $this->sanitizeQuery($coreNoun.' '.$clean);
+                if ('' === $clean) {
+                    continue;
+                }
             }
 
             $key = mb_strtolower($clean);
@@ -141,6 +174,46 @@ PROMPT;
         }
 
         return $this->buildDeterministicSubTopics($mainTopic, max(1, min(4, $maxTags)));
+    }
+
+    private function sanitizeCoreNoun(string $raw): ?string
+    {
+        $clean = $this->sanitizeQuery($raw);
+        if ('' === $clean) {
+            return null;
+        }
+
+        $words = preg_split('/\s+/', $clean) ?: [];
+        if (\count($words) > 2) {
+            $words = \array_slice($words, 0, 2);
+            $clean = implode(' ', $words);
+        }
+
+        $lower = mb_strtolower($clean);
+        if (mb_strlen($lower) < 2 || 1 === preg_match('/[+\d%]/', $lower) || \in_array($lower, self::NON_HEAD_NOUN_ATTRIBUTES, true) || \in_array($lower, self::FORBIDDEN_META_WORDS, true)) {
+            return null;
+        }
+
+        return $clean;
+    }
+
+    /**
+     * @param list<string> $phrases
+     */
+    private function containsAnyPhrase(string $text, array $phrases): bool
+    {
+        $textLower = mb_strtolower($text);
+        foreach ($phrases as $phrase) {
+            $pLower = mb_strtolower(trim($phrase));
+            if ('' === $pLower) {
+                continue;
+            }
+            if (str_contains($textLower, $pLower)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -172,7 +245,6 @@ PROMPT;
             $tokens[] = $cleanToken;
         }
 
-        // Trim leading and trailing stopwords (e.g. "Canon AX380 in" -> "Canon AX380")
         while ([] !== $tokens && \in_array(mb_strtolower($tokens[0]), self::STOP_WORDS, true)) {
             array_shift($tokens);
         }
@@ -181,7 +253,6 @@ PROMPT;
         }
 
         if (\count($tokens) > self::MAX_QUERY_WORDS) {
-            // Drop interior stopwords first before truncating
             $meaningful = array_values(array_filter(
                 $tokens,
                 static fn (string $t): bool => !\in_array(mb_strtolower($t), self::STOP_WORDS, true),
@@ -203,24 +274,27 @@ PROMPT;
      *    marketplaces never return 0 results solely because all AI queries had 3-4 words.
      *
      * @param list<string> $aiTags
+     * @param list<string> $synonyms
      *
      * @return list<string>
      */
-    private function ensureHighRecallAnchors(string $rawTopic, array $aiTags, int $maxTags): array
-    {
+    private function ensureHighRecallAnchors(
+        string $rawTopic,
+        array $aiTags,
+        int $maxTags,
+        ?string $coreNoun = null,
+        array $synonyms = [],
+    ): array {
         $anchors = [];
 
-        // 1. Preserve exact alphanumeric codes from the buyer's input (e.g. "ax380", "40L", "rtx4070")
         $topicTokens = $this->extractMeaningfulTokens($rawTopic);
         $alphanumericCodes = array_values(array_filter(
             $topicTokens,
             static fn (string $t): bool => 1 === preg_match('/^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z0-9+._-]{2,20}$/', $t),
         ));
 
-        // Detect most frequent meaningful token across AI queries (typically the corrected core product noun)
-        $headNoun = $this->detectHeadNoun($aiTags, $topicTokens);
+        $headNoun = $coreNoun ?? $this->detectHeadNoun($aiTags, $topicTokens);
 
-        // If buyer wrote an exact alphanumeric code (like a product model) and no AI tag preserved it, anchor it
         foreach (\array_slice($alphanumericCodes, 0, 2) as $code) {
             $codeLower = mb_strtolower($code);
             $alreadyPresent = false;
@@ -234,7 +308,7 @@ PROMPT;
             if (!$alreadyPresent) {
                 $prefix = null;
                 foreach ($topicTokens as $t) {
-                    if (mb_strtolower($t) !== $codeLower && mb_strlen($t) >= 3 && !is_numeric($t)) {
+                    if (mb_strtolower($t) !== $codeLower && mb_strlen($t) >= 3 && 0 === preg_match('/[+\d%]/', $t)) {
                         $prefix = $t;
                         break;
                     }
@@ -247,7 +321,6 @@ PROMPT;
             }
         }
 
-        // 2. Ensure at least 2 ultra-broad 2-word queries exist when we have a clear head noun
         $shortCount = 0;
         foreach ($aiTags as $tag) {
             $wordCount = \count(preg_split('/\s+/', trim($tag)) ?: []);
@@ -268,7 +341,6 @@ PROMPT;
             return \array_slice($aiTags, 0, $maxTags);
         }
 
-        // Put high-recall 2-word anchors first so they are never dropped by $maxTags
         $merged = [];
         $seen = [];
         foreach (array_merge($anchors, $aiTags) as $candidate) {
@@ -306,7 +378,14 @@ PROMPT;
             $seenInTag = [];
             foreach ($words as $idx => $word) {
                 $lower = mb_strtolower($word);
-                if (mb_strlen($lower) < 3 || 1 === preg_match('/\d/', $lower) || isset($seenInTag[$lower]) || \in_array($lower, self::STOP_WORDS, true) || \in_array($lower, self::FORBIDDEN_META_WORDS, true) || \in_array($lower, self::NON_HEAD_NOUN_ATTRIBUTES, true)) {
+                if (
+                    mb_strlen($lower) < 3
+                    || 1 === preg_match('/[+\d%]/', $lower)
+                    || isset($seenInTag[$lower])
+                    || \in_array($lower, self::STOP_WORDS, true)
+                    || \in_array($lower, self::FORBIDDEN_META_WORDS, true)
+                    || \in_array($lower, self::NON_HEAD_NOUN_ATTRIBUTES, true)
+                ) {
                     continue;
                 }
                 $seenInTag[$lower] = true;
@@ -324,7 +403,6 @@ PROMPT;
                     return $freqCmp;
                 }
 
-                // Tie-break toward the rightmost word in noun phrases (e.g. "internet switch" -> "switch")
                 return ($positionSum[$b] / $counts[$b]) <=> ($positionSum[$a] / $counts[$a]);
             });
 
@@ -335,7 +413,8 @@ PROMPT;
         }
 
         foreach ($topicTokens as $token) {
-            if (mb_strlen($token) >= 3 && !is_numeric($token)) {
+            $lower = mb_strtolower($token);
+            if (mb_strlen($lower) >= 3 && 0 === preg_match('/[+\d%]/', $lower) && !\in_array($lower, self::NON_HEAD_NOUN_ATTRIBUTES, true)) {
                 return $token;
             }
         }
@@ -354,7 +433,6 @@ PROMPT;
         $aiCandidates = [];
         $seen = [$headLower => true];
 
-        // 1. High-frequency companion words from AI queries (e.g. "Ethernet", "Gigabit", "Fanless")
         $aiWordCounts = [];
         $aiWordOriginal = [];
         foreach ($aiTags as $tag) {
@@ -372,7 +450,6 @@ PROMPT;
             $aiCandidates[] = $aiWordOriginal[$lower];
         }
 
-        // 2. Technical/distinctive tokens from the buyer input (prioritizing tokens with '+', '%', or digits)
         $topicTokens = $this->extractMeaningfulTokens($rawTopic);
         usort($topicTokens, static function (string $a, string $b): int {
             $scoreA = (1 === preg_match('/[+\d%]/', $a) ? 2 : 0) + (mb_strlen($a) >= 4 ? 1 : 0);
@@ -402,7 +479,6 @@ PROMPT;
             $buyerCandidates[] = $token;
         }
 
-        // Interleave top AI companion words and buyer distinctive tokens for balanced broad + specific recall
         $merged = [];
         $maxLen = max(\count($aiCandidates), \count($buyerCandidates));
         for ($i = 0; $i < $maxLen; ++$i) {

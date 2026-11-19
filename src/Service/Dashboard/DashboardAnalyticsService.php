@@ -111,11 +111,29 @@ class DashboardAnalyticsService
      */
     public function buildSearchAnalytics(SearchRequest $searchRequest, array $allEvaluations): array
     {
-        $totalStoredAds = $this->listingRepository->count(['searchRequest' => $searchRequest]);
+        $totalStoredAds = $this->listingRepository->count([
+            'searchRequest' => $searchRequest,
+            'isSold' => false,
+        ]);
+        $soldCount = $this->listingRepository->count([
+            'searchRequest' => $searchRequest,
+            'isSold' => true,
+        ]);
         $totalEvaluatedAds = \count($allEvaluations);
         $progressPercent = $totalStoredAds > 0
             ? min(100, (int) round(($totalEvaluatedAds / $totalStoredAds) * 100))
             : 0;
+
+        $lastViewedAt = $searchRequest->getLastViewedAt();
+        $unseenWatermark = $lastViewedAt ?? new \DateTimeImmutable('-24 hours');
+        $unseenTotal = 0;
+        $unseenMustBuy = 0;
+        $unseenExtremelyGood = 0;
+        $unseenGood = 0;
+        $unseenBadPoor = 0;
+
+        /** @var array<int, array{bucket_ts: int, label: string, must_buy: int, extremely_good: int, good: int, bad_poor: int, total: int, is_unseen: bool}> $timelineBuckets */
+        $timelineBuckets = [];
 
         $categoryCounts = [
             'must_buy' => 0,
@@ -188,6 +206,47 @@ class DashboardAnalyticsService
             $workingScores[] = $eval->getWorkingConditionScore();
             $ageScores[] = $eval->getProductAgeScore();
             $relevanceScores[] = $eval->getRelevanceScore();
+
+            $evalTime = $eval->getEvaluatedAt();
+            $isUnseen = $evalTime > $unseenWatermark;
+            if ($isUnseen) {
+                ++$unseenTotal;
+                if (DealCategory::MustBuy === $eval->getCategory()) {
+                    ++$unseenMustBuy;
+                } elseif (DealCategory::ExtremelyGood === $eval->getCategory()) {
+                    ++$unseenExtremelyGood;
+                } elseif (DealCategory::Good === $eval->getCategory()) {
+                    ++$unseenGood;
+                } else {
+                    ++$unseenBadPoor;
+                }
+            }
+
+            // Bucket into 30-minute windows matching the cron radar cadence
+            $bucketTs = (int) (floor($evalTime->getTimestamp() / 1800) * 1800);
+            if (!isset($timelineBuckets[$bucketTs])) {
+                $bucketDt = (new \DateTimeImmutable('@'.$bucketTs));
+                $timelineBuckets[$bucketTs] = [
+                    'bucket_ts' => $bucketTs,
+                    'label' => $bucketDt->format('m-d H:i'),
+                    'must_buy' => 0,
+                    'extremely_good' => 0,
+                    'good' => 0,
+                    'bad_poor' => 0,
+                    'total' => 0,
+                    'is_unseen' => ($bucketTs + 1800) > $unseenWatermark->getTimestamp(),
+                ];
+            }
+            ++$timelineBuckets[$bucketTs]['total'];
+            if (DealCategory::MustBuy === $eval->getCategory()) {
+                ++$timelineBuckets[$bucketTs]['must_buy'];
+            } elseif (DealCategory::ExtremelyGood === $eval->getCategory()) {
+                ++$timelineBuckets[$bucketTs]['extremely_good'];
+            } elseif (DealCategory::Good === $eval->getCategory()) {
+                ++$timelineBuckets[$bucketTs]['good'];
+            } else {
+                ++$timelineBuckets[$bucketTs]['bad_poor'];
+            }
 
             if (true === $eval->isWorking()) {
                 ++$workingCount;
@@ -305,8 +364,12 @@ class DashboardAnalyticsService
             ];
         }
 
+        ksort($timelineBuckets);
+        $discoveryTimeline = array_values(\array_slice($timelineBuckets, -20));
+
         return [
             'total_stored_ads' => $totalStoredAds,
+            'sold_count' => $soldCount,
             'total_evaluated_ads' => $totalEvaluatedAds,
             'uncomputed_ads' => max(0, $totalStoredAds - $totalEvaluatedAds),
             'progress_percent' => $progressPercent,
@@ -316,6 +379,15 @@ class DashboardAnalyticsService
             'bad_count' => $categoryCounts['bad'],
             'poor_count' => $categoryCounts['poor'],
             'category_counts' => $categoryCounts,
+            'unseen_total' => $unseenTotal,
+            'unseen_recommended_count' => $unseenMustBuy + $unseenExtremelyGood + $unseenGood,
+            'unseen_must_buy' => $unseenMustBuy,
+            'unseen_extremely_good' => $unseenExtremelyGood,
+            'unseen_good' => $unseenGood,
+            'unseen_bad_poor' => $unseenBadPoor,
+            'last_viewed_at' => $lastViewedAt?->format('Y-m-d H:i:s'),
+            'last_viewed_iso' => $lastViewedAt?->format(\DateTimeInterface::ATOM),
+            'discovery_timeline' => $discoveryTimeline,
             'working_count' => $workingCount,
             'avg_score' => $avgScore,
             'avg_price' => $avgPrice,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Ai;
 
 use App\Dto\Ai\ListingEvaluationResultDto;
+use App\Dto\Ai\ProductTypeGatekeeperResultDto;
 use App\Entity\Listing;
 use App\Entity\SearchRequest;
 use Psr\Log\LoggerInterface;
@@ -12,6 +13,26 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class ListingEvaluatorAgent
 {
+    /**
+     * Universal, domain-agnostic accessory / component / non-main-item keywords (EN/FR/ES/DE).
+     * Never product-category specific — applies equally to electronics, cameras, tools, appliances, etc.
+     *
+     * @var list<string>
+     */
+    private const UNIVERSAL_ACCESSORY_INDICATORS = [
+        'accessory', 'accessoire', 'accesorio', 'zubehör', 'zubehor',
+        'module', 'módulo', 'modulo', 'modul',
+        'adapter', 'adaptateur', 'adaptador',
+        'converter', 'convertisseur', 'convertidor',
+        'cable', 'câble', 'kabel',
+        'charger', 'chargeur', 'cargador', 'ladegerät',
+        'empty box', 'boîte vide', 'boite vide', 'caja vacía',
+        'manual', 'manuel', 'notice',
+        'spare part', 'pièce détachée', 'piece detachee', 'replacement part',
+        'protective case', 'coque', 'housse', 'étui', 'etui',
+        'bracket', 'mount', 'support mural',
+    ];
+
     public function __construct(
         private readonly LlmClientInterface $llmClient,
         private readonly HttpClientInterface $httpClient,
@@ -20,19 +41,110 @@ final class ListingEvaluatorAgent
     ) {
     }
 
-    public function evaluate(SearchRequest $searchRequest, Listing $listing): ListingEvaluationResultDto
+    /**
+     * Stage-1 Fast Core-Product Gatekeeper (runs BEFORE detail-page HTTP fetch and BEFORE SearXNG).
+     *
+     * Returns a POOR (<= 10) ListingEvaluationResultDto immediately when the listing title/snippet
+     * clearly sells a different item or an accessory/module/cable/part instead of the core product
+     * requested by the buyer. Returns null when the listing passes Stage 1 and should proceed to
+     * full detail enrichment + SearXNG + Stage-2 scoring.
+     */
+    public function checkCoreProductGatekeeper(SearchRequest $searchRequest, Listing $listing): ?ListingEvaluationResultDto
     {
+        $unifiedSpec = $this->buildUnifiedSpec($searchRequest);
+
+        // 1. Fast zero-LLM universal accessory check when the listing's own title explicitly opens with
+        //    an accessory/module/cable/adapter noun that the buyer did NOT ask for.
+        $titleAccessoryHit = $this->detectUnrequestedAccessoryInText($unifiedSpec, $listing->getTitle());
+        if (null !== $titleAccessoryHit) {
+            return $this->buildRejectedProductDto(
+                $searchRequest,
+                $listing,
+                sprintf(
+                    'Rejected in Stage-1 gatekeeper: listing title "%s" explicitly sells an accessory/component ("%s") rather than the main product requested by the buyer.',
+                    $listing->getTitle(),
+                    $titleAccessoryHit,
+                ),
+                $titleAccessoryHit,
+            );
+        }
+
+        // 2. Fast focused LLM yes/no gatekeeper (~40 output tokens) to catch non-obvious wrong categories
+        $systemPrompt = <<<'PROMPT'
+You are a strict product-type gatekeeper for second-hand classified ads.
+Compare ONLY the CORE PRODUCT TYPE the buyer wants against the ACTUAL ITEM being sold in the listing.
+
+RULES (APPLIES TO ANY PRODUCT CATEGORY):
+- Ignore price and detailed technical specs for now — focus ONLY on whether the listing is selling the SAME core product type, or instead selling an accessory, plug-in module, cable, adapter, spare part, empty box, manual, or unrelated category.
+- If the listing sells an accessory, component, plug-in module, cable, adapter, box, or different product category when the buyer wants the main device/product, set "is_same_core_product": false and "is_accessory_or_component_only": true.
+- Respond ONLY with valid JSON:
+{"buyer_wants_item_type": "...", "listing_sells_item_type": "...", "is_same_core_product": true, "is_accessory_or_component_only": false, "brief_reason": "..."}
+PROMPT;
+
+        $shortDesc = trim((string) ($listing->getDescription() ?? ''));
+        $userPrompt = sprintf(
+            "Buyer Specification:\n%s\n\nListing Title: %s\nListing Snippet: %s",
+            mb_strimwidth($unifiedSpec, 0, 500, '...'),
+            $listing->getTitle(),
+            '' !== $shortDesc ? mb_strimwidth($shortDesc, 0, 300, '...') : 'None yet',
+        );
+
+        try {
+            /** @var ProductTypeGatekeeperResultDto $gate */
+            $gate = $this->llmClient->generateStructured(
+                $systemPrompt,
+                $userPrompt,
+                ProductTypeGatekeeperResultDto::class,
+            );
+
+            $accessoryFromClassification = $this->detectUnrequestedAccessoryInText(
+                $unifiedSpec,
+                $gate->listingSellsItemType,
+            );
+
+            if (!$gate->isSameCoreProduct || $gate->isAccessoryOrComponentOnly || null !== $accessoryFromClassification) {
+                $reason = sprintf(
+                    'Rejected in Stage-1 gatekeeper: buyer wants "%s", but listing sells "%s". %s',
+                    $gate->buyerWantsItemType,
+                    $gate->listingSellsItemType,
+                    trim($gate->briefReason),
+                );
+
+                return $this->buildRejectedProductDto(
+                    $searchRequest,
+                    $listing,
+                    $reason,
+                    $gate->listingSellsItemType,
+                    $gate->buyerWantsItemType,
+                );
+            }
+        } catch (\Throwable $e) {
+            // If Stage-1 gatekeeper fails transiently, fall through to Stage 2 rather than dropping valid listings
+            $this->logger->debug('Stage-1 product-type gatekeeper skipped due to transient error.', [
+                'listing_id' => $listing->getExternalId(),
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return null;
+    }
+
+    public function evaluate(SearchRequest $searchRequest, Listing $listing, bool $runGatekeeper = true): ListingEvaluationResultDto
+    {
+        if ($runGatekeeper) {
+            $rejected = $this->checkCoreProductGatekeeper($searchRequest, $listing);
+            if (null !== $rejected) {
+                return $rejected;
+            }
+        }
+
         $base64Images = [];
         if ($searchRequest->isEnableImages() && [] !== $listing->getImageUrls() && $this->llmClient->supportsVision()) {
             $base64Images = $this->downloadImagesAsBase64(\array_slice($listing->getImageUrls(), 0, 2));
         }
 
         $externalSpecs = $this->productSpecService?->lookupSpecsForTitle($listing->getTitle());
-
-        $unifiedSpec = trim($searchRequest->getTopic());
-        if (null !== $searchRequest->getUserRequirements() && '' !== trim($searchRequest->getUserRequirements())) {
-            $unifiedSpec .= "\nAdditional requirements: ".trim($searchRequest->getUserRequirements());
-        }
+        $unifiedSpec = $this->buildUnifiedSpec($searchRequest);
 
         $cleanDescription = trim((string) ($listing->getDescription() ?? ''));
         if ('' === $cleanDescription) {
@@ -45,23 +157,26 @@ Compare ONLY the Listing (Title, Description, Condition, External Product Refere
 
 CRITICAL RULES (APPLIES TO ANY PRODUCT CATEGORY IN THE WORLD):
 1. Write "reasoning" FIRST:
-   - Step 1: Identify what item the listing is ACTUALLY selling (main product vs. an accessory, cable, case, box, manual, or unrelated category).
+   - Step 1: Identify what item the listing is ACTUALLY selling ("listing_actual_product_type") vs. what the buyer wants ("buyer_requested_product_type").
    - Step 2: Check EACH mandatory buyer requirement one by one ONLY against facts explicitly written in the Listing or External Product Reference (SearXNG). NEVER invent, assume, or copy unstated specs from the Buyer Product Specification!
+   - If the buyer wrote alternative/conditional options (e.g. "either option A or option B", "if X then Y, otherwise Z"), satisfy ANY ONE complete valid branch.
    - Treat true unit/language equivalents as matching (e.g., 1Gbps = 1000Mbps = Gigabit; French vs. English terms; a higher quantity satisfying "at least X").
    - NEVER confuse distinct standards or upgraded tiers (e.g., a base standard does NOT satisfy a "+" or upgraded standard).
-2. Set "is_wrong_product_or_accessory" = true if the listing is a different category or just an accessory/cable/box/part instead of the core product requested (relevance_score <= 10, score <= 10).
-3. Put ONLY genuinely missing, unverified, or contradicted BUYER requirements in "missing_or_unverified_specs". If ALL mandatory buyer requirements are clearly stated in the listing or External Reference, "missing_or_unverified_specs" MUST be an empty array [].
+2. Set "is_wrong_product_or_accessory" = true if the listing is a different category or just an accessory/module/cable/adapter/box/part instead of the core product requested (relevance_score <= 10, score <= 10).
+3. Put ONLY genuinely missing, unverified, or contradicted mandatory BUYER requirements in "missing_or_unverified_specs". If ALL mandatory requirements for a valid buyer option are clearly stated in the listing or External Reference, "missing_or_unverified_specs" MUST be [].
 4. Standard marketplace condition labels ("État neuf", "Très bon état", "Bon état") mean is_working = true and working_condition_score 85-100 unless defects/HS/"pour pièces"/"en panne" are stated.
 5. 5-Tier Score Scale:
-   - 90-100 (MUST BUY - RARE): ALL mandatory buyer requirements explicitly verified (missing_or_unverified_specs = []), functional, price <= target.
-   - 70-89 (EXTREMELY GOOD): ALL mandatory buyer requirements explicitly verified (missing_or_unverified_specs = []), functional, strong price around or below target.
-   - 50-69 (GOOD): Core product and primary specs verified, minor uncertainty on secondary details or slightly higher price.
-   - 30-49 (BAD): Overpriced (>15% above target), poor condition, OR 1 mandatory buyer requirement unverified.
+   - 90-100 (MUST BUY - LEGENDARY): ALL mandatory buyer requirements explicitly verified (missing_or_unverified_specs = []), functional, price <= target, and the product is EXTREMELY GOOD. If a product is meant to go in this category, this mean this is a product to must buy instantly.
+   - 70-89 (EXTREMELY GOOD): ALL mandatory buyer requirements explicitly verified (missing_or_unverified_specs = []), functional, price around or below target or the item is good to buy.
+   - 50-69 (GOOD): Core product and primary specs verified, minor uncertainty on secondary details.
+   - 30-49 (BAD): poor condition, OR multiple mandatory buyer requirement unverified.
    - 0-29 (POOR): Wrong product/accessory (0-10), broken/HS (0-15), contradicted mandatory spec (10-25), OR 2+ mandatory buyer specs missing/unverified (10-29).
 
 Respond ONLY with a valid JSON object matching this exact key order:
 {
   "reasoning": "step-by-step factual check of product type and each buyer requirement against the listing and SearXNG reference",
+  "buyer_requested_product_type": "main product type buyer wants",
+  "listing_actual_product_type": "actual item sold in listing",
   "is_wrong_product_or_accessory": false,
   "matched_specs": ["only buyer requirements explicitly evidenced"],
   "missing_or_unverified_specs": ["only mandatory buyer requirements contradicted or not stated anywhere"],
@@ -116,7 +231,8 @@ PROMPT;
 
     /**
      * Universal, domain-agnostic calibration rules that enforce strict consistency between
-     * verified evidence, missing specs, working condition, price ratio, and overall 5-tier score.
+     * verified evidence, accessory mismatch, missing specs, working condition, price ratio,
+     * and overall 5-tier score.
      */
     private function enforceStrictCalibration(
         SearchRequest $searchRequest,
@@ -124,6 +240,7 @@ PROMPT;
         ListingEvaluationResultDto $dto,
         ?string $externalSpecs = null,
     ): ListingEvaluationResultDto {
+        $unifiedSpec = $this->buildUnifiedSpec($searchRequest);
         $combinedText = mb_strtolower(implode(' ', array_filter([
             $listing->getTitle(),
             $listing->getDescription(),
@@ -143,9 +260,21 @@ PROMPT;
         $relevanceScore = $dto->relevanceScore;
         $isWorking = $dto->isWorking;
         $reasoning = trim($dto->reasoning);
+        $isWrongProduct = $dto->isWrongProductOrAccessory;
 
-        // 1. Wrong product type or accessory only
-        if ($dto->isWrongProductOrAccessory) {
+        // 1. Universal accessory/component mismatch consistency check
+        if (!$isWrongProduct) {
+            $unrequestedAccessory = $this->detectUnrequestedAccessoryInText(
+                $unifiedSpec,
+                $dto->listingActualProductType.' '.$listing->getTitle(),
+            );
+            if (null !== $unrequestedAccessory) {
+                $isWrongProduct = true;
+                $reasoning = trim($reasoning.sprintf(' Flagged as accessory/component mismatch ("%s").', $unrequestedAccessory));
+            }
+        }
+
+        if ($isWrongProduct) {
             $relevanceScore = min($relevanceScore, 10);
             $score = min($score, 10);
         }
@@ -157,7 +286,7 @@ PROMPT;
             $score = min($score, 15);
         }
 
-        // 3. Collect LLM-reported missing specs + domain-agnostic exact-token evidence check
+        // 3. Collect LLM-reported missing specs + unconditional exact-token evidence check
         $missingSpecs = array_values(array_filter(
             array_map(static fn (string $s): string => trim($s), $dto->missingOrUnverifiedSpecs),
             static fn (string $s): bool => '' !== $s && !\in_array(strtolower($s), ['none', 'n/a', 'null', 'nothing', 'aucun', 'aucune'], true),
@@ -185,7 +314,7 @@ PROMPT;
             $score = min($score, 45);
         }
 
-        // 4. Respect low relevance scores (wrong product type / missing mandatory specs)
+        // 4. Respect low relevance scores
         if ($relevanceScore <= 15) {
             $score = min($score, 10);
         } elseif ($relevanceScore <= 30) {
@@ -216,10 +345,10 @@ PROMPT;
             + ($workingScore * 0.20)
             + ($ageScore * 0.10)
         );
-        $score = min($score, max($weightedCeiling, [] === $missingSpecs && $relevanceScore >= 90 && $priceRatio <= 1.0 && false !== $isWorking ? 90 : $weightedCeiling));
+        $score = min($score, max($weightedCeiling, !$isWrongProduct && [] === $missingSpecs && $relevanceScore >= 90 && $priceRatio <= 1.0 && false !== $isWorking ? 90 : $weightedCeiling));
 
-        // 7. MUST BUY (90-100) requires strong relevance (>= 88), zero missing specs, functional state, and price <= targetPrice
-        if ($score >= 90 && ([] !== $missingSpecs || $relevanceScore < 88 || $priceRatio > 1.0 || false === $isWorking)) {
+        // 7. MUST BUY (90-100) requires exact product, zero missing specs, strong relevance, functional state, and price <= targetPrice
+        if ($score >= 90 && ($isWrongProduct || [] !== $missingSpecs || $relevanceScore < 88 || $priceRatio > 1.0 || false === $isWorking)) {
             $score = min($score, 88);
         }
 
@@ -238,21 +367,105 @@ PROMPT;
             reasoning: $reasoning,
             matchedSpecs: $dto->matchedSpecs,
             missingOrUnverifiedSpecs: $missingSpecs,
-            isWrongProductOrAccessory: $dto->isWrongProductOrAccessory,
+            isWrongProductOrAccessory: $isWrongProduct,
+            buyerRequestedProductType: $dto->buyerRequestedProductType,
+            listingActualProductType: $dto->listingActualProductType,
             imageAnalyzed: $dto->imageAnalyzed,
         );
     }
 
     /**
-     * Domain-agnostic check for high-precision buyer tokens (symbol-bearing standards like "sfp+",
-     * "poe+", "75%", or explicit alphanumeric model codes like "ax380", "rtx4070") that MUST be
-     * evidenced in the listing text or SearXNG reference rather than hallucinated by a small LLM.
+     * Checks whether a listing title or LLM item-type label explicitly identifies a universal
+     * accessory/component/part that the buyer specification itself did NOT request.
+     */
+    private function detectUnrequestedAccessoryInText(string $buyerSpec, string $candidateText): ?string
+    {
+        $buyerLower = mb_strtolower($buyerSpec);
+        $textLower = mb_strtolower(trim($candidateText));
+        if ('' === $textLower) {
+            return null;
+        }
+
+        foreach (self::UNIVERSAL_ACCESSORY_INDICATORS as $indicator) {
+            $escaped = preg_quote($indicator, '/');
+            $pattern = '/(?<![\p{L}\p{N}])'.$escaped.'s?(?![\p{L}\p{N}])/u';
+
+            // Only flag when the buyer did NOT ask for this accessory/component type
+            if (1 === preg_match($pattern, $buyerLower)) {
+                continue;
+            }
+
+            if (1 === preg_match($pattern, $textLower)) {
+                return $indicator;
+            }
+        }
+
+        return null;
+    }
+
+    private function buildRejectedProductDto(
+        SearchRequest $searchRequest,
+        Listing $listing,
+        string $reason,
+        string $actualType,
+        string $requestedType = '',
+    ): ListingEvaluationResultDto {
+        $targetPrice = max(1.0, $searchRequest->getTargetPrice());
+        $priceRatio = $listing->getPrice() / $targetPrice;
+        $priceScore = $priceRatio <= 1.0 ? 85 : ($priceRatio <= 1.2 ? 55 : 25);
+
+        return new ListingEvaluationResultDto(
+            score: 8,
+            priceScore: $priceScore,
+            workingConditionScore: 75,
+            productAgeScore: 50,
+            relevanceScore: 5,
+            isWorking: true,
+            estimatedAge: 'unknown',
+            reasoning: $reason,
+            matchedSpecs: [],
+            missingOrUnverifiedSpecs: ['wrong product type or accessory only'],
+            isWrongProductOrAccessory: true,
+            buyerRequestedProductType: $requestedType,
+            listingActualProductType: $actualType,
+            imageAnalyzed: false,
+        );
+    }
+
+    private function buildUnifiedSpec(SearchRequest $searchRequest): string
+    {
+        $unifiedSpec = trim($searchRequest->getTopic());
+        if (null !== $searchRequest->getUserRequirements() && '' !== trim($searchRequest->getUserRequirements())) {
+            // Avoid duplicating topic if userRequirements already starts with the same full text
+            $req = trim($searchRequest->getUserRequirements());
+            if (str_starts_with($req, $unifiedSpec)) {
+                return $req;
+            }
+            $unifiedSpec .= "\nAdditional requirements: ".$req;
+        }
+
+        return $unifiedSpec;
+    }
+
+    /**
+     * Domain-agnostic check for high-precision UNCONDITIONAL buyer tokens (symbol-bearing standards
+     * like "sfp+", "poe+", "75%", or explicit alphanumeric model codes like "ax380", "rtx4070").
+     *
+     * Automatically skips conditional/optional specifications (e.g. "if ... otherwise ...",
+     * "not mandatory", "optional", "any of those") so valid alternative branches aren't falsely penalized.
      *
      * @return list<string>
      */
     private function findUnverifiedExactBuyerTokens(SearchRequest $searchRequest, string $evidenceTextLower): array
     {
-        $spec = trim($searchRequest->getTopic().' '.($searchRequest->getUserRequirements() ?? ''));
+        $spec = $this->buildUnifiedSpec($searchRequest);
+
+        // If the buyer explicitly wrote conditional / alternative branches, let the LLM evaluate the
+        // branch logic rather than forcing every token in every branch to appear simultaneously.
+        if (1 === preg_match('/\b(otherwise|either|not mandatory|optional|if possible|without|sinon|optionnel|ou bien|au choix|any of)\b/i', $spec)) {
+            return [];
+        }
+
         $rawTokens = preg_split('/[\s,\/;()\[\]]+/', $spec) ?: [];
         $unverified = [];
         $seen = [];
@@ -264,11 +477,9 @@ PROMPT;
                 continue;
             }
 
-            // 1. Symbol-bearing technical standards/specs (e.g. "sfp+", "poe+", "75%", "65%")
             $isSymbolSpec = 1 === preg_match('/^[a-z0-9]{2,12}[+%]$/i', $token);
 
-            // 2. Concrete alphanumeric model codes (e.g. "ax380", "rtx4070", "fs605v3"), excluding generic units/ports
-            $isGenericUnitOrPort = 1 === preg_match('/^(?:\d+(?:[.,]\d+)?(?:gbps|mbps|kbps|gb|go|mb|mo|tb|to|ghz|mhz|hz|w|kw|v|mv|a|ma|mah|wh|mm|cm|m|km|kg|g|ml|cl|l|px|mp|fps|db|rpm|x|p|k)|cat\d+[a-z]?|rj\d+|usb\d+[a-z]?|wifi\d+[a-z]?|hdmi\d+[a-z]?)$/i', $token);
+            $isGenericUnitOrPort = 1 === preg_match('/^(?:\d+(?:[.,]\d+)?(?:gbps|mbps|kbps|gb|go|mb|mo|tb|to|ghz|mhz|hz|w|kw|v|mv|a|ma|mah|wh|mm|cm|m|km|kg|g|ml|cl|l|px|mp|fps|db|rpm|x|p|k)|cat\d+[a-z]?|rj\d+|usb\d+[a-z]?|wifi\d+[a-z]?|hdmi\d+[a-z]?|gddr\d+[a-z]?|ddr\d+[a-z]?)$/i', $token);
             $isModelCode = !$isGenericUnitOrPort && 1 === preg_match('/^[a-z]{1,6}[-._]?\d{2,}[a-z0-9._-]*$/i', $token);
 
             if (!$isSymbolSpec && !$isModelCode) {
@@ -277,7 +488,6 @@ PROMPT;
 
             $seen[$lower] = true;
 
-            // Check exact boundary match (so "sfp" does NOT falsely match "sfp+")
             $escaped = preg_quote($lower, '/');
             $pattern = '/(?<![a-z0-9])'.$escaped.'(?![a-z0-9+])/u';
             if (1 !== preg_match($pattern, $evidenceTextLower)) {

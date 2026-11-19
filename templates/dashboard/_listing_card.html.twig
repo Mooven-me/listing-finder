@@ -5,6 +5,7 @@
 {% set category = eval.category.value %}
 {% set targetPrice = active_search.targetPrice %}
 {% set priceDiff = targetPrice > 0 ? (((listing.price - targetPrice) / targetPrice) * 100)|round : 0 %}
+{% set isUnseen = active_search.lastViewedAt ? (eval.evaluatedAt > active_search.lastViewedAt) : false %}
 
 {% set accentBorder = category == 'must_buy'
     ? 'border-emerald-700/70 hover:border-emerald-500/80'
@@ -44,6 +45,12 @@
             <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium uppercase tracking-wide border {{ tierBadgeClass }}">
                 {{ eval.category.shortLabel }}
             </span>
+            {% if isUnseen %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wide bg-cyan-950 text-cyan-300 border border-cyan-800">NEW</span>
+            {% endif %}
+            {% if listing.isSold %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wide bg-zinc-800 text-zinc-400 border border-zinc-700 line-through">SOLD</span>
+            {% endif %}
             {% if eval.isWorking is same as(true) %}
                 <span class="text-[11px] font-mono text-zinc-400">Functional</span>
             {% elseif eval.isWorking is same as(false) %}

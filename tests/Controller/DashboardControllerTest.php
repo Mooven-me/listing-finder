@@ -160,6 +160,30 @@ final class DashboardControllerTest extends WebTestCase
         self::assertSame(1, $statusPayload['must_buy_count']);
         self::assertSame(1, $statusPayload['extremely_good_count']);
         self::assertSame(100, $statusPayload['progress_percent']);
+        self::assertArrayHasKey('discovery_timeline', $statusPayload);
+        self::assertArrayHasKey('unseen_total', $statusPayload);
+        self::assertArrayHasKey('sold_count', $statusPayload);
+        self::assertArrayHasKey('provider_health', $statusPayload);
+
+        // 4b. Price Asc / Price Desc / Newest sorting + onlyNew + sold hiding
+        $client->request('GET', sprintf('/?search=%d&sort=price_asc', $searchId));
+        self::assertResponseIsSuccessful();
+        self::assertStringContainsString('Price Asc', (string) $client->getResponse()->getContent());
+
+        $client->request('GET', sprintf('/?search=%d&sort=newest&onlyNew=1', $searchId));
+        self::assertResponseIsSuccessful();
+
+        // Mark one listing sold and confirm it is hidden by default unless showSold=1
+        static::getContainer()->get(EntityManagerInterface::class)->getConnection()->executeStatement(
+            'UPDATE listing SET is_sold = true WHERE external_id = :ext',
+            ['ext' => 'vnt-202'],
+        );
+        $client->request('GET', sprintf('/?search=%d', $searchId));
+        self::assertResponseIsSuccessful();
+        self::assertStringNotContainsString('Canon Pixma AX380 Wi-Fi Printer', (string) $client->getResponse()->getContent());
+        $client->request('GET', sprintf('/?search=%d&showSold=1', $searchId));
+        self::assertResponseIsSuccessful();
+        self::assertStringContainsString('Canon Pixma AX380 Wi-Fi Printer', (string) $client->getResponse()->getContent());
 
         // 5. Processing search with 0 stored ads and empty queue transitions cleanly to Completed
         $emptySearch = new SearchRequest(

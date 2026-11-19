@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace App\Tests\Unit;
 
 use App\Dto\Ai\ListingEvaluationResultDto;
+use App\Dto\Ai\ProductTypeGatekeeperResultDto;
 use App\Entity\Listing;
 use App\Entity\SearchRequest;
-use App\Service\Ai\LlmClientInterface;
 use App\Service\Ai\ListingEvaluatorAgent;
+use App\Service\Ai\LlmClientInterface;
 use App\Service\Ai\SearxngProductSpecService;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
@@ -33,6 +34,10 @@ final class ListingEvaluatorAgentTest extends TestCase
                 string $dtoClass,
                 array $base64Images = [],
             ): object {
+                if (ProductTypeGatekeeperResultDto::class === $dtoClass) {
+                    return new ProductTypeGatekeeperResultDto('network switch', 'network switch', true, false, 'Both are switches.');
+                }
+
                 $this->captured[] = $userPrompt;
 
                 return new ListingEvaluationResultDto(
@@ -58,7 +63,7 @@ final class ListingEvaluatorAgentTest extends TestCase
 
             public function getVisionModelName(): string
             {
-                return 'lfm2.5:8b';
+                return 'llama-3.1-8b-instant';
             }
         };
 
@@ -90,18 +95,90 @@ final class ListingEvaluatorAgentTest extends TestCase
         $agent = new ListingEvaluatorAgent($llm, $httpClient, new NullLogger());
         $result = $agent->evaluate($search, $listing);
 
-        // 2+ missing/unverified specs must cap score & relevance at <= 29 (POOR)
         self::assertLessThanOrEqual(29, $result->score);
         self::assertLessThanOrEqual(29, $result->relevanceScore);
         self::assertFalse($result->imageAnalyzed);
-        // Must NOT download images when vision is unsupported
         self::assertSame(0, $imageDownloads);
-        // Empty description must be normalized rather than blank
         self::assertStringContainsString('No seller description provided.', $capturedPrompts[0]);
         self::assertStringContainsString('Missing/unverified: two SFP+ ports, fanless design', $result->reasoning);
     }
 
-    public function testWrongProductOrAccessoryIsCappedAtTenAndUsesSearxngContext(): void
+    public function testStageOneGatekeeperRejectsModuleAndCableWithoutCallingSearxng(): void
+    {
+        $llmCalls = 0;
+        $llm = new class($llmCalls) implements LlmClientInterface {
+            public function __construct(public int &$calls)
+            {
+            }
+
+            public function generateStructured(
+                string $systemPrompt,
+                string $userPrompt,
+                string $dtoClass,
+                array $base64Images = [],
+            ): object {
+                ++$this->calls;
+
+                return new ProductTypeGatekeeperResultDto('network switch', 'transceiver', false, true, 'Accessory only.');
+            }
+
+            public function supportsVision(): bool
+            {
+                return false;
+            }
+
+            public function getVisionModelName(): string
+            {
+                return 'llama-3.1-8b-instant';
+            }
+        };
+
+        $searxCalls = 0;
+        $searxHttp = new MockHttpClient(function () use (&$searxCalls): MockResponse {
+            ++$searxCalls;
+
+            return new MockResponse('{"results":[]}');
+        });
+        $specService = new SearxngProductSpecService($searxHttp, new ArrayAdapter(), new NullLogger(), 'http://searxng:8080', 5);
+
+        $search = new SearchRequest(
+            topic: 'a network switch with at least 4 RJ45 1Gbps ports and 2 SFP+ ports',
+            targetPrice: 50.0,
+        );
+        $moduleListing = new Listing(
+            searchRequest: $search,
+            provider: 'leboncoin',
+            externalId: '3203277948',
+            searchTopicUsed: 'switch sfp+',
+            title: 'Module SFP+ 10Gb RJ45 - freebox ultra',
+            price: 23.0,
+            url: 'https://www.leboncoin.fr/ad/accessoires_informatique/3203277948',
+        );
+        $cableListing = new Listing(
+            searchRequest: $search,
+            provider: 'leboncoin',
+            externalId: '3250992624',
+            searchTopicUsed: 'switch 1Gbps',
+            title: 'YGREEN Câble Ethernet 15m Cat 6 Plat Gigabit 1Gbps RJ45',
+            price: 14.0,
+            url: 'https://www.leboncoin.fr/ad/accessoires_informatique/3250992624',
+        );
+
+        $agent = new ListingEvaluatorAgent($llm, new MockHttpClient(), new NullLogger(), $specService);
+
+        $moduleRes = $agent->evaluate($search, $moduleListing);
+        $cableRes = $agent->evaluate($search, $cableListing);
+
+        self::assertLessThanOrEqual(10, $moduleRes->score);
+        self::assertTrue($moduleRes->isWrongProductOrAccessory);
+        self::assertLessThanOrEqual(10, $cableRes->score);
+        self::assertTrue($cableRes->isWrongProductOrAccessory);
+        // Zero SearXNG calls and zero LLM calls needed for explicit title accessories!
+        self::assertSame(0, $searxCalls);
+        self::assertSame(0, $llmCalls);
+    }
+
+    public function testStageTwoInjectsSearxngContextAndSupportsConditionalSpecifications(): void
     {
         $capturedPrompts = [];
         $llm = new class($capturedPrompts) implements LlmClientInterface {
@@ -116,20 +193,26 @@ final class ListingEvaluatorAgentTest extends TestCase
                 string $dtoClass,
                 array $base64Images = [],
             ): object {
+                if (ProductTypeGatekeeperResultDto::class === $dtoClass) {
+                    return new ProductTypeGatekeeperResultDto('network switch', 'network switch', true, false, 'Both are switches.');
+                }
+
                 $this->captured[] = $userPrompt;
 
                 return new ListingEvaluationResultDto(
-                    score: 43,
-                    priceScore: 85,
-                    workingConditionScore: 80,
-                    productAgeScore: 50,
-                    relevanceScore: 38,
+                    score: 93,
+                    priceScore: 95,
+                    workingConditionScore: 95,
+                    productAgeScore: 90,
+                    relevanceScore: 98,
                     isWorking: true,
-                    estimatedAge: 'unknown',
-                    reasoning: 'This listing is an Ethernet cable, not a switch.',
-                    matchedSpecs: [],
-                    missingOrUnverifiedSpecs: ['switch'],
-                    isWrongProductOrAccessory: true,
+                    estimatedAge: 'recent',
+                    reasoning: 'Matches the 10Gbps RJ45 branch (no SFP+ needed).',
+                    matchedSpecs: ['5x 10Gbps RJ45 ports'],
+                    missingOrUnverifiedSpecs: [],
+                    isWrongProductOrAccessory: false,
+                    buyerRequestedProductType: 'network switch',
+                    listingActualProductType: '10G network switch',
                     imageAnalyzed: false,
                 );
             }
@@ -141,7 +224,7 @@ final class ListingEvaluatorAgentTest extends TestCase
 
             public function getVisionModelName(): string
             {
-                return 'lfm2.5:8b';
+                return 'llama-3.1-8b-instant';
             }
         };
 
@@ -149,8 +232,8 @@ final class ListingEvaluatorAgentTest extends TestCase
             new MockResponse((string) json_encode([
                 'results' => [
                     [
-                        'title' => 'NETGEAR FS605v3 Datasheet',
-                        'content' => '5-Port 10/100 Fast Ethernet Unmanaged Switch, no Gigabit, no SFP+.',
+                        'title' => 'NETGEAR XS505M Datasheet',
+                        'content' => '5-Port 10G Multi-Gigabit Ethernet Unmanaged Switch.',
                     ],
                 ],
             ])),
@@ -158,27 +241,26 @@ final class ListingEvaluatorAgentTest extends TestCase
         $specService = new SearxngProductSpecService($searxHttp, new ArrayAdapter(), new NullLogger(), 'http://searxng:8080', 5);
 
         $search = new SearchRequest(
-            topic: 'an internet switch with two sfp+ ports and more than four rj45 1Gbps ports',
-            targetPrice: 50.0,
+            topic: 'a switch with 4 RJ45 1Gbps + 2 SFP+, otherwise 4 RJ45 10Gbps without SFP+ (not mandatory)',
+            targetPrice: 120.0,
         );
-        $listing = new Listing(
+        $tenGigSwitch = new Listing(
             searchRequest: $search,
             provider: 'leboncoin',
-            externalId: '3223568185',
-            searchTopicUsed: 'switch 1Gbps',
-            title: 'Switch Netgear FS605v3',
-            price: 10.0,
-            url: 'https://www.leboncoin.fr/ad/ordinateurs/3223568185',
-            description: 'Switch Netgear FS605v3 5 ports',
+            externalId: '8888881',
+            searchTopicUsed: 'switch 10Gbps',
+            title: 'Switch Netgear XS505M 5 ports 10Gbps RJ45',
+            price: 95.0,
+            url: 'https://www.leboncoin.fr/ad/ordinateurs/8888881',
+            description: 'Switch 5 ports RJ45 10Gbps parfait état.',
         );
 
         $agent = new ListingEvaluatorAgent($llm, new MockHttpClient(), new NullLogger(), $specService);
-        $result = $agent->evaluate($search, $listing);
+        $result = $agent->evaluate($search, $tenGigSwitch);
 
-        self::assertLessThanOrEqual(10, $result->score);
-        self::assertLessThanOrEqual(10, $result->relevanceScore);
-        self::assertStringContainsString('NETGEAR FS605v3 Datasheet', $capturedPrompts[0]);
-        self::assertStringContainsString('5-Port 10/100 Fast Ethernet', $capturedPrompts[0]);
+        // Conditional spec must NOT falsely penalize missing "sfp+" when the 10Gbps RJ45 branch is satisfied
+        self::assertGreaterThanOrEqual(90, $result->score);
+        self::assertStringContainsString('NETGEAR XS505M Datasheet', $capturedPrompts[0]);
     }
 
     public function testUnverifiedExactTechnicalTokenCapsHallucinatedLlmScore(): void
@@ -190,7 +272,10 @@ final class ListingEvaluatorAgentTest extends TestCase
                 string $dtoClass,
                 array $base64Images = [],
             ): object {
-                // Simulates an 8B model hallucinating a perfect score despite missing "sfp+"
+                if (ProductTypeGatekeeperResultDto::class === $dtoClass) {
+                    return new ProductTypeGatekeeperResultDto('network switch', 'network switch', true, false, 'Both are switches.');
+                }
+
                 return new ListingEvaluationResultDto(
                     score: 94,
                     priceScore: 100,
@@ -214,7 +299,7 @@ final class ListingEvaluatorAgentTest extends TestCase
 
             public function getVisionModelName(): string
             {
-                return 'lfm2.5:8b';
+                return 'llama-3.1-8b-instant';
             }
         };
 
@@ -223,7 +308,6 @@ final class ListingEvaluatorAgentTest extends TestCase
             targetPrice: 50.0,
         );
 
-        // Listing only has SFP (1G), NOT SFP+ (10G)
         $sfpOnlyListing = new Listing(
             searchRequest: $search,
             provider: 'leboncoin',
@@ -236,7 +320,6 @@ final class ListingEvaluatorAgentTest extends TestCase
             conditionState: 'Très bon état',
         );
 
-        // Listing genuinely has SFP+
         $sfpPlusListing = new Listing(
             searchRequest: $search,
             provider: 'leboncoin',
@@ -257,5 +340,77 @@ final class ListingEvaluatorAgentTest extends TestCase
 
         $sfpPlusResult = $agent->evaluate($search, $sfpPlusListing);
         self::assertGreaterThanOrEqual(90, $sfpPlusResult->score);
+    }
+
+    public function testStageOneGatekeeperDoesNotRejectOnNegatedAccessoryReason(): void
+    {
+        $llm = new class implements LlmClientInterface {
+            public function generateStructured(
+                string $systemPrompt,
+                string $userPrompt,
+                string $dtoClass,
+                array $base64Images = [],
+            ): object {
+                if (ProductTypeGatekeeperResultDto::class === $dtoClass) {
+                    return new ProductTypeGatekeeperResultDto(
+                        buyerWantsItemType: 'network switch',
+                        listingSellsItemType: 'network switch',
+                        isSameCoreProduct: true,
+                        isAccessoryOrComponentOnly: false,
+                        briefReason: 'Both buyer and listing are for a network switch; the listing is not merely an accessory or component.',
+                    );
+                }
+
+                return new ListingEvaluationResultDto(
+                    score: 88,
+                    priceScore: 95,
+                    workingConditionScore: 95,
+                    productAgeScore: 85,
+                    relevanceScore: 92,
+                    isWorking: true,
+                    estimatedAge: 'recent',
+                    reasoning: 'Valid switch matching specs.',
+                    matchedSpecs: ['24x 1Gbps RJ45', '2x SFP+'],
+                    missingOrUnverifiedSpecs: [],
+                    isWrongProductOrAccessory: false,
+                    buyerRequestedProductType: 'network switch',
+                    listingActualProductType: 'network switch',
+                    imageAnalyzed: false,
+                );
+            }
+
+            public function supportsVision(): bool
+            {
+                return false;
+            }
+
+            public function getVisionModelName(): string
+            {
+                return 'openai/gpt-oss-120b';
+            }
+        };
+
+        $search = new SearchRequest(
+            topic: 'a network switch with two sfp+ ports and 4 rj45 1Gbps ports',
+            targetPrice: 50.0,
+        );
+        $listing = new Listing(
+            searchRequest: $search,
+            provider: 'leboncoin',
+            externalId: '9999992',
+            searchTopicUsed: 'switch sfp+',
+            title: 'Switch MikroTik CSS326',
+            price: 45.0,
+            url: 'https://www.leboncoin.fr/ad/ordinateurs/9999992',
+            description: '24 ports Gigabit 1Gbps + 2 ports SFP+',
+            conditionState: 'Très bon état',
+        );
+
+        $agent = new ListingEvaluatorAgent($llm, new MockHttpClient(), new NullLogger());
+        self::assertNull($agent->checkCoreProductGatekeeper($search, $listing));
+
+        $result = $agent->evaluate($search, $listing);
+        self::assertGreaterThanOrEqual(85, $result->score);
+        self::assertFalse($result->isWrongProductOrAccessory);
     }
 }

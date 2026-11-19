@@ -11,6 +11,7 @@ use App\Entity\ListingEvaluation;
 use App\Entity\SearchRequest;
 use App\Enum\DealCategory;
 use App\Enum\SearchStatus;
+use App\Message\CheckSearchAvailabilityMessage;
 use App\Message\EvaluateListingMessage;
 use App\Repository\ListingEvaluationRepository;
 use App\Repository\ListingRepository;
@@ -19,6 +20,7 @@ use App\Service\Ai\LlmClientInterface;
 use App\Service\Ai\TopicExpansionAgent;
 use App\Service\Dashboard\DashboardAnalyticsService;
 use App\Service\Provider\ListingProviderRegistry;
+use App\Service\Provider\ProviderHealthService;
 use App\Service\SearchDispatcherService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -41,6 +43,7 @@ class DashboardController extends AbstractController
         private readonly TopicExpansionAgent $topicExpansionAgent,
         private readonly LlmClientInterface $llmClient,
         private readonly ListingProviderRegistry $providerRegistry,
+        private readonly ProviderHealthService $providerHealth,
         private readonly SearchDispatcherService $searchDispatcher,
         private readonly MessageBusInterface $messageBus,
         private readonly EntityManagerInterface $entityManager,
@@ -108,6 +111,7 @@ class DashboardController extends AbstractController
             'grouped_evaluations' => $groupedEvaluations,
             'available_providers' => $this->providerRegistry->getAvailableProviderNames(),
             'provider_option_schemas' => $this->providerRegistry->getOptionSchemas(),
+            'provider_health' => null !== $activeSearch ? $this->providerHealth->getActiveBlocks($activeSearch->getEnabledProviders()) : [],
             'vision_supported' => $this->llmClient->supportsVision(),
             'vision_model' => $this->llmClient->getVisionModelName(),
         ]);
@@ -135,6 +139,7 @@ class DashboardController extends AbstractController
             'status' => $searchRequest->getStatus()->value,
             'global' => $globalStats,
             'total_ads' => $analytics['total_stored_ads'],
+            'sold_count' => $analytics['sold_count'],
             'evaluated_ads' => $analytics['total_evaluated_ads'],
             'progress_percent' => $analytics['progress_percent'],
             'must_buy_count' => $analytics['must_buy_count'],
@@ -142,6 +147,14 @@ class DashboardController extends AbstractController
             'good_count' => $analytics['good_count'],
             'bad_count' => $analytics['bad_count'],
             'poor_count' => $analytics['poor_count'],
+            'unseen_total' => $analytics['unseen_total'],
+            'unseen_recommended_count' => $analytics['unseen_recommended_count'],
+            'unseen_must_buy' => $analytics['unseen_must_buy'],
+            'unseen_extremely_good' => $analytics['unseen_extremely_good'],
+            'unseen_good' => $analytics['unseen_good'],
+            'last_viewed_at' => $analytics['last_viewed_at'],
+            'discovery_timeline' => $analytics['discovery_timeline'],
+            'provider_health' => $this->providerHealth->getActiveBlocks($searchRequest->getEnabledProviders()),
             'avg_score' => $analytics['avg_score'],
             'avg_price' => $analytics['avg_price'],
             'min_price' => $analytics['min_price'],
@@ -326,6 +339,52 @@ class DashboardController extends AbstractController
         }
 
         $this->addFlash('success', sprintf('Queued %d listings for strict AI re-evaluation.', \count($listings)));
+
+        return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+    }
+
+    #[Route('/search/{id}/mark-seen', name: 'app_dashboard_search_mark_seen', methods: ['POST'])]
+    public function markSeen(int $id, Request $request): RedirectResponse
+    {
+        if (!$this->isCsrfTokenValid('dashboard_action_'.$id, (string) $request->request->get('_token'))) {
+            $this->addFlash('error', 'Invalid CSRF token.');
+
+            return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+        }
+
+        $searchRequest = $this->searchRequestRepository->find($id);
+        if (null === $searchRequest) {
+            throw $this->createNotFoundException('Search request not found.');
+        }
+
+        $searchRequest->setLastViewedAt(new \DateTimeImmutable());
+        $this->entityManager->flush();
+
+        $this->addFlash('info', sprintf('Marked all current listings as seen for Search #%d. Future cron discoveries will be highlighted as NEW.', $id));
+
+        return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+    }
+
+    #[Route('/search/{id}/check-availability', name: 'app_dashboard_search_check_availability', methods: ['POST'])]
+    public function checkAvailability(int $id, Request $request): RedirectResponse
+    {
+        if (!$this->isCsrfTokenValid('dashboard_action_'.$id, (string) $request->request->get('_token'))) {
+            $this->addFlash('error', 'Invalid CSRF token.');
+
+            return $this->redirectToRoute('app_dashboard', ['search' => $id]);
+        }
+
+        $searchRequest = $this->searchRequestRepository->find($id);
+        if (null === $searchRequest) {
+            throw $this->createNotFoundException('Search request not found.');
+        }
+
+        $this->messageBus->dispatch(new CheckSearchAvailabilityMessage(
+            searchRequestId: $id,
+            maxListings: 50,
+        ));
+
+        $this->addFlash('success', sprintf('Queued safe availability check for top unsold deals (score >= 50, up to 50 ads) on Search #%d.', $id));
 
         return $this->redirectToRoute('app_dashboard', ['search' => $id]);
     }

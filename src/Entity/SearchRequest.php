@@ -58,6 +58,9 @@ class SearchRequest
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $createdAt;
 
+    #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?\DateTimeImmutable $lastViewedAt = null;
+
     /**
      * @var Collection<int, Listing>
      */
@@ -92,6 +95,7 @@ class SearchRequest
         $this->enabledProviders = $enabledProviders;
         $this->providerOptions = $providerOptions;
         $this->createdAt = new \DateTimeImmutable();
+        $this->lastViewedAt = $this->createdAt;
         $this->listings = new ArrayCollection();
         $this->evaluations = new ArrayCollection();
     }
@@ -191,6 +195,18 @@ class SearchRequest
     public function getCreatedAt(): \DateTimeImmutable
     {
         return $this->createdAt;
+    }
+
+    public function getLastViewedAt(): ?\DateTimeImmutable
+    {
+        return $this->lastViewedAt;
+    }
+
+    public function setLastViewedAt(?\DateTimeImmutable $lastViewedAt): self
+    {
+        $this->lastViewedAt = $lastViewedAt;
+
+        return $this;
     }
 
     /**

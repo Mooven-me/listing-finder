@@ -112,6 +112,23 @@ final class VintedProviderTest extends TestCase
         self::assertStringContainsString('www.vinted.fr/catalog', $capturedUrls[0]);
     }
 
+    public function testFetchListingDetailsDetectsSoldVintedItemFromEscapedRscFlags(): void
+    {
+        $soldHtml = '<!doctype html><html><body><script>self.__next_f.push([1,"{\"is_closed\":true,\"can_buy\":false,\"description\":\"Switch 8 ports\"}"])</script></body></html>';
+        $provider = new VintedProvider(
+            httpClient: new MockHttpClient([new MockResponse($soldHtml)]),
+            logger: new NullLogger(),
+            mockListingProvider: new MockListingProvider(),
+            decoder: new JsonEncoder(),
+            fallbackToMock: false,
+            maxUnlimitedPages: 5,
+        );
+
+        $details = $provider->fetchListingDetails('https://www.vinted.fr/items/10752865759-switch');
+        self::assertNotNull($details);
+        self::assertTrue($details->isSoldOrUnavailable);
+    }
+
     private function buildCatalogHtml(int $startIndex, int $count): string
     {
         $itemsHtml = '';

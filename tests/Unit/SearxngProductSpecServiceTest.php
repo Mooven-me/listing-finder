@@ -18,7 +18,7 @@ final class SearxngProductSpecServiceTest extends TestCase
         $service = new SearxngProductSpecService(new MockHttpClient(), new ArrayAdapter(), new NullLogger(), 'http://searxng:8080');
 
         self::assertSame('Switch Netgear FS605v3', $service->extractModelLookupQuery('Switch Netgear FS605v3'));
-        self::assertSame('Switch administrable Linksys LGS326', $service->extractModelLookupQuery('Switch administrable Linksys LGS326'));
+        self::assertSame('administrable Linksys LGS326', $service->extractModelLookupQuery('Switch administrable Linksys LGS326'));
         self::assertSame('Canon printer AX380', $service->extractModelLookupQuery('Vend Canon printer AX380 bon etat'));
 
         // Generic titles without concrete product model codes must return null

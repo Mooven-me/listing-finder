@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service\Ai;
 
 use App\Dto\Ai\ListingEvaluationResultDto;
+use App\Dto\Ai\ProductTypeGatekeeperResultDto;
 use App\Dto\Ai\TopicExpansionResultDto;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\Serializer\Normalizer\AbstractObjectNormalizer;
@@ -17,8 +18,10 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 final class ConfigurableLlmClient implements LlmClientInterface
 {
     private const VISION_CAPABILITY_CACHE_TTL = 600; // 10 minutes
+    private const LLM_PACE_CACHE_KEY = 'llm_last_request_ts';
 
     private ?bool $visionSupportedMemo = null;
+    private float $lastRequestAt = 0.0;
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
@@ -39,6 +42,10 @@ final class ConfigurableLlmClient implements LlmClientInterface
         #[Autowire(env: 'int:AI_NUM_CTX')]
         private readonly int $numCtx = 8192,
         private readonly ?CacheInterface $cache = null,
+        #[Autowire(env: 'AI_VISION_ENABLED')]
+        private readonly string $visionEnabledMode = 'auto',
+        #[Autowire(env: 'int:AI_MIN_REQUEST_INTERVAL_MS')]
+        private readonly int $minRequestIntervalMs = 0,
     ) {
     }
 
@@ -53,8 +60,19 @@ final class ConfigurableLlmClient implements LlmClientInterface
             return $this->visionSupportedMemo;
         }
 
-        if ('openai' === strtolower(trim($this->provider))) {
+        $override = strtolower(trim($this->visionEnabledMode));
+        if (\in_array($override, ['false', '0', 'no', 'off'], true)) {
+            return $this->visionSupportedMemo = false;
+        }
+        if (\in_array($override, ['true', '1', 'yes', 'on'], true)) {
             return $this->visionSupportedMemo = true;
+        }
+
+        if ('openai' === strtolower(trim($this->provider))) {
+            $modelLower = strtolower(trim($this->visionModel));
+
+            // Only treat OpenAI-compatible models as vision-capable when their name signals multimodal support
+            return $this->visionSupportedMemo = 1 === preg_match('/(vision|vl\b|gpt-4o|gpt-4\.1|gemini|gemma3|claude-3|claude-4|llama-4|pixtral|llava|minicpm-v)/i', $modelLower);
         }
 
         $cacheKey = 'ollama_vision_cap_'.sha1(rtrim($this->baseUrl, '/').'|'.trim($this->visionModel));
@@ -83,6 +101,8 @@ final class ConfigurableLlmClient implements LlmClientInterface
         string $dtoClass,
         array $base64Images = [],
     ): object {
+        $this->throttleIfConfigured();
+
         $actuallyUsedImages = false;
         $activeModel = [] !== $base64Images ? $this->visionModel : $this->model;
 
@@ -113,6 +133,54 @@ final class ConfigurableLlmClient implements LlmClientInterface
         }
 
         return $dto;
+    }
+
+    private function throttleIfConfigured(): void
+    {
+        if ($this->minRequestIntervalMs <= 0) {
+            return;
+        }
+
+        $now = microtime(true);
+        $last = $this->lastRequestAt;
+
+        if (null !== $this->cache) {
+            try {
+                /** @var float $cachedLast */
+                $cachedLast = $this->cache->get(self::LLM_PACE_CACHE_KEY, static function (ItemInterface $item): float {
+                    $item->expiresAfter(60);
+
+                    return 0.0;
+                });
+                $last = max($last, $cachedLast);
+            } catch (\Throwable) {
+                // fallback to in-memory timestamp
+            }
+        }
+
+        $elapsedMs = ($now - $last) * 1000.0;
+        if ($last > 0.0 && $elapsedMs < $this->minRequestIntervalMs) {
+            $sleepUs = (int) round(($this->minRequestIntervalMs - $elapsedMs) * 1000.0);
+            if ($sleepUs > 0) {
+                usleep($sleepUs);
+            }
+        }
+
+        $recorded = microtime(true);
+        $this->lastRequestAt = $recorded;
+
+        if (null !== $this->cache) {
+            try {
+                $this->cache->delete(self::LLM_PACE_CACHE_KEY);
+                $this->cache->get(self::LLM_PACE_CACHE_KEY, static function (ItemInterface $item) use ($recorded): float {
+                    $item->expiresAfter(60);
+
+                    return $recorded;
+                });
+            } catch (\Throwable) {
+                // ignore
+            }
+        }
     }
 
     private function probeOllamaVisionCapability(): bool
@@ -255,6 +323,11 @@ final class ConfigurableLlmClient implements LlmClientInterface
             return [
                 'type' => 'object',
                 'properties' => [
+                    'core_product_noun' => ['type' => 'string'],
+                    'core_product_synonyms' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                    ],
                     'sub_topics' => [
                         'type' => 'array',
                         'items' => ['type' => 'string'],
@@ -262,7 +335,27 @@ final class ConfigurableLlmClient implements LlmClientInterface
                         'maxItems' => 15,
                     ],
                 ],
-                'required' => ['sub_topics'],
+                'required' => ['core_product_noun', 'core_product_synonyms', 'sub_topics'],
+            ];
+        }
+
+        if (ProductTypeGatekeeperResultDto::class === $dtoClass) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'buyer_wants_item_type' => ['type' => 'string'],
+                    'listing_sells_item_type' => ['type' => 'string'],
+                    'is_same_core_product' => ['type' => 'boolean'],
+                    'is_accessory_or_component_only' => ['type' => 'boolean'],
+                    'brief_reason' => ['type' => 'string'],
+                ],
+                'required' => [
+                    'buyer_wants_item_type',
+                    'listing_sells_item_type',
+                    'is_same_core_product',
+                    'is_accessory_or_component_only',
+                    'brief_reason',
+                ],
             ];
         }
 
@@ -271,6 +364,8 @@ final class ConfigurableLlmClient implements LlmClientInterface
                 'type' => 'object',
                 'properties' => [
                     'reasoning' => ['type' => 'string'],
+                    'buyer_requested_product_type' => ['type' => 'string'],
+                    'listing_actual_product_type' => ['type' => 'string'],
                     'is_wrong_product_or_accessory' => ['type' => 'boolean'],
                     'matched_specs' => [
                         'type' => 'array',
@@ -290,6 +385,8 @@ final class ConfigurableLlmClient implements LlmClientInterface
                 ],
                 'required' => [
                     'reasoning',
+                    'buyer_requested_product_type',
+                    'listing_actual_product_type',
                     'is_wrong_product_or_accessory',
                     'matched_specs',
                     'missing_or_unverified_specs',
@@ -320,18 +417,39 @@ final class ConfigurableLlmClient implements LlmClientInterface
         }
 
         if (TopicExpansionResultDto::class === $dtoClass) {
-            if (!isset($decoded['sub_topics']) || !\is_array($decoded['sub_topics'])) {
-                return $json;
+            if (isset($decoded['sub_topics']) && \is_array($decoded['sub_topics'])) {
+                $flattened = [];
+                array_walk_recursive($decoded['sub_topics'], static function (mixed $item) use (&$flattened): void {
+                    if (\is_string($item) && '' !== trim($item)) {
+                        $flattened[] = trim($item);
+                    }
+                });
+                $decoded['sub_topics'] = $flattened;
             }
 
-            $flattened = [];
-            array_walk_recursive($decoded['sub_topics'], static function (mixed $item) use (&$flattened): void {
-                if (\is_string($item) && '' !== trim($item)) {
-                    $flattened[] = trim($item);
+            if (isset($decoded['core_product_synonyms'])) {
+                $syns = [];
+                if (\is_array($decoded['core_product_synonyms'])) {
+                    array_walk_recursive($decoded['core_product_synonyms'], static function (mixed $item) use (&$syns): void {
+                        if (\is_string($item) && '' !== trim($item)) {
+                            $syns[] = trim($item);
+                        }
+                    });
+                } elseif (\is_string($decoded['core_product_synonyms']) && '' !== trim($decoded['core_product_synonyms'])) {
+                    $syns[] = trim($decoded['core_product_synonyms']);
                 }
-            });
+                $decoded['core_product_synonyms'] = array_values(array_unique($syns));
+            }
 
-            $decoded['sub_topics'] = $flattened;
+            return (string) json_encode($decoded, \JSON_UNESCAPED_UNICODE);
+        }
+
+        if (ProductTypeGatekeeperResultDto::class === $dtoClass) {
+            foreach (['is_same_core_product', 'is_accessory_or_component_only'] as $boolField) {
+                if (isset($decoded[$boolField]) && !\is_bool($decoded[$boolField])) {
+                    $decoded[$boolField] = filter_var($decoded[$boolField], \FILTER_VALIDATE_BOOLEAN);
+                }
+            }
 
             return (string) json_encode($decoded, \JSON_UNESCAPED_UNICODE);
         }
@@ -362,6 +480,12 @@ final class ConfigurableLlmClient implements LlmClientInterface
 
             if (isset($decoded['is_wrong_product_or_accessory']) && !\is_bool($decoded['is_wrong_product_or_accessory'])) {
                 $decoded['is_wrong_product_or_accessory'] = filter_var($decoded['is_wrong_product_or_accessory'], \FILTER_VALIDATE_BOOLEAN);
+            }
+
+            foreach (['score', 'price_score', 'working_condition_score', 'product_age_score', 'relevance_score'] as $intField) {
+                if (isset($decoded[$intField]) && is_numeric($decoded[$intField])) {
+                    $decoded[$intField] = max(0, min(100, (int) round((float) $decoded[$intField])));
+                }
             }
 
             return (string) json_encode($decoded, \JSON_UNESCAPED_UNICODE);
@@ -409,32 +533,61 @@ final class ConfigurableLlmClient implements LlmClientInterface
             $headers['Authorization'] = sprintf('Bearer %s', trim($this->apiKey));
         }
 
-        $endpoint = rtrim($this->baseUrl, '/').'/v1/chat/completions';
+        $endpoint = rtrim($this->baseUrl, '/').'/chat/completions';
+        if (!str_ends_with(rtrim($this->baseUrl, '/'), '/v1')) {
+            $endpoint = rtrim($this->baseUrl, '/').'/v1/chat/completions';
+        }
 
-        try {
-            $response = $this->httpClient->request('POST', $endpoint, [
-                'timeout' => $this->timeout,
-                'headers' => $headers,
-                'json' => [
-                    'model' => $model,
-                    'temperature' => 0.2,
-                    'response_format' => ['type' => 'json_object'],
-                    'messages' => [
-                        [
-                            'role' => 'system',
-                            'content' => $systemPrompt,
-                        ],
-                        [
-                            'role' => 'user',
-                            'content' => $userContent,
+        $maxAttempts = 3;
+        $payload = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; ++$attempt) {
+            try {
+                $response = $this->httpClient->request('POST', $endpoint, [
+                    'timeout' => $this->timeout,
+                    'headers' => $headers,
+                    'json' => [
+                        'model' => $model,
+                        'temperature' => 0.2,
+                        'response_format' => ['type' => 'json_object'],
+                        'messages' => [
+                            [
+                                'role' => 'system',
+                                'content' => $systemPrompt,
+                            ],
+                            [
+                                'role' => 'user',
+                                'content' => $userContent,
+                            ],
                         ],
                     ],
-                ],
-            ]);
+                ]);
 
-            $payload = $response->toArray();
-        } catch (\Throwable $e) {
-            throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
+                $statusCode = $response->getStatusCode();
+                if (429 === $statusCode && $attempt < $maxAttempts) {
+                    $respHeaders = $response->getHeaders(false);
+                    $retryAfterRaw = $respHeaders['retry-after'][0] ?? null;
+                    $sleepSeconds = is_numeric($retryAfterRaw) ? max(1, min(15, (int) ceil((float) $retryAfterRaw))) : ($attempt * 3);
+                    sleep($sleepSeconds);
+
+                    continue;
+                }
+
+                if ($statusCode >= 400) {
+                    $errBody = mb_strimwidth($response->getContent(false), 0, 300, '...');
+                    throw new \RuntimeException(sprintf('HTTP %d from "%s": %s', $statusCode, $endpoint, $errBody));
+                }
+
+                /** @var array<string, mixed> $decoded */
+                $decoded = $response->toArray(false);
+                $payload = $decoded;
+                break;
+            } catch (\Throwable $e) {
+                if ($attempt >= $maxAttempts) {
+                    throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
+                }
+                sleep($attempt * 2);
+            }
         }
 
         $content = $payload['choices'][0]['message']['content'] ?? null;

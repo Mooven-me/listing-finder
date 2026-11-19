@@ -8,6 +8,7 @@ use App\Service\Provider\FrenchGeocoderService;
 use App\Service\Provider\LeBonCoinProvider;
 use App\Service\Provider\ListingProviderRegistry;
 use App\Service\Provider\MockListingProvider;
+use App\Service\Provider\ProviderHealthService;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
@@ -241,7 +242,61 @@ final class LeBonCoinProviderTest extends TestCase
         self::assertSame('Accessoires informatique', $details->categoryName);
         self::assertSame('Linksys', $details->brand);
         self::assertSame('Très bon état', $details->conditionState);
+        self::assertFalse($details->isSoldOrUnavailable);
         self::assertStringContainsString('Category: Accessoires informatique', $details->formatEnrichedDescription());
+    }
+
+    public function testExcludeSoldSkipsPendingAdsAnd403TripsCooldownWithoutCallingApi(): void
+    {
+        $html = $this->buildNextDataHtml([
+            [
+                'list_id' => 3001,
+                'subject' => 'Available Switch',
+                'status' => 'active',
+                'price' => [40],
+                'attributes' => [['key' => 'purchase_cta_visible', 'value' => 'true']],
+            ],
+            [
+                'list_id' => 3002,
+                'subject' => 'Already Pending Switch',
+                'status' => 'active',
+                'price' => [35],
+                'attributes' => [['key' => 'transaction_status', 'value' => 'pending']],
+            ],
+        ], maxPages: 1);
+
+        $provider = $this->createProvider(new MockHttpClient([new MockResponse($html)]));
+        $results = $provider->search('switch', 50.0, 10, []);
+
+        self::assertCount(1, $results);
+        self::assertSame('3001', $results[0]->externalId);
+
+        // Verify HTTP 403 trips ProviderHealthService cooldown and does NOT hit api.leboncoin.fr
+        $health = new ProviderHealthService(new ArrayAdapter(), new NullLogger());
+        $requests = [];
+        $blockedClient = new MockHttpClient(function (string $method, string $url) use (&$requests): MockResponse {
+            $requests[] = $method.' '.$url;
+
+            return new MockResponse('<html>DataDome captcha</html>', ['http_code' => 403]);
+        });
+        $blockedProvider = new LeBonCoinProvider(
+            httpClient: $blockedClient,
+            logger: new NullLogger(),
+            mockListingProvider: new MockListingProvider(),
+            decoder: new JsonEncoder(),
+            geocoder: new FrenchGeocoderService($blockedClient, new ArrayAdapter(), new NullLogger()),
+            fallbackToMock: false,
+            maxUnlimitedPages: 3,
+            providerHealth: $health,
+        );
+
+        self::assertSame([], $blockedProvider->search('gpu 16go', 300.0, 10, []));
+        self::assertTrue($health->isCoolingDown('leboncoin'));
+        self::assertCount(1, $requests);
+        self::assertStringNotContainsString('api.leboncoin.fr', $requests[0]);
+        // Second call during cooldown makes ZERO HTTP requests
+        self::assertSame([], $blockedProvider->search('gpu 16go', 300.0, 10, []));
+        self::assertCount(1, $requests);
     }
 
     private function createProvider(MockHttpClient $httpClient, int $maxUnlimitedPages = 15): LeBonCoinProvider

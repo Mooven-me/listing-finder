@@ -61,6 +61,9 @@ class Listing
     #[ORM\Column(type: Types::BOOLEAN)]
     private bool $isComputed = false;
 
+    #[ORM\Column(type: Types::BOOLEAN, options: ['default' => false])]
+    private bool $isSold = false;
+
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $fetchedAt;
 
@@ -210,6 +213,18 @@ class Listing
     public function setIsComputed(bool $isComputed): self
     {
         $this->isComputed = $isComputed;
+
+        return $this;
+    }
+
+    public function isSold(): bool
+    {
+        return $this->isSold;
+    }
+
+    public function setIsSold(bool $isSold): self
+    {
+        $this->isSold = $isSold;
 
         return $this;
     }

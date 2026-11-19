@@ -7,13 +7,40 @@ namespace App\Service\Provider;
 use App\Dto\Provider\FetchedListingDto;
 use App\Dto\Provider\ListingDetailsDto;
 use App\Dto\Provider\ProviderOptionDefinition;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\DomCrawler\Crawler;
+use Symfony\Component\Serializer\Encoder\DecoderInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 class VintedProvider extends AbstractHttpListingProvider
 {
     private const CATALOG_API_URL = 'https://www.vinted.fr/api/v2/catalog/items';
     private const CATALOG_WEB_URL = 'https://www.vinted.fr/catalog';
     private const ITEMS_PER_PAGE = 96;
+    private const MIN_REQUEST_INTERVAL_MS = 1000;
+    private const BLOCK_COOLDOWN_SECONDS = 900;
+
+    public function __construct(
+        HttpClientInterface $httpClient,
+        LoggerInterface $logger,
+        MockListingProvider $mockListingProvider,
+        DecoderInterface $decoder,
+        #[Autowire(env: 'bool:LISTING_PROVIDER_FALLBACK_TO_MOCK')]
+        bool $fallbackToMock = true,
+        #[Autowire(env: 'int:LISTING_PROVIDER_MAX_UNLIMITED_PAGES')]
+        int $maxUnlimitedPages = 15,
+        private readonly ?ProviderHealthService $providerHealth = null,
+    ) {
+        parent::__construct(
+            $httpClient,
+            $logger,
+            $mockListingProvider,
+            $decoder,
+            $fallbackToMock,
+            $maxUnlimitedPages,
+        );
+    }
 
     public function getName(): string
     {
@@ -27,7 +54,13 @@ class VintedProvider extends AbstractHttpListingProvider
             return null;
         }
 
+        if ($this->providerHealth?->isCoolingDown($this->getName())) {
+            return new ListingDetailsDto(rateLimited: true);
+        }
+
         try {
+            $this->providerHealth?->throttle($this->getName(), self::MIN_REQUEST_INTERVAL_MS);
+
             $response = $this->httpClient->request('GET', $cleanUrl, [
                 'timeout' => 8.0,
                 'headers' => array_merge($this->defaultHeaders(), [
@@ -36,7 +69,18 @@ class VintedProvider extends AbstractHttpListingProvider
                 ]),
             ]);
 
-            if (200 !== $response->getStatusCode()) {
+            $statusCode = $response->getStatusCode();
+            if (\in_array($statusCode, [404, 410], true)) {
+                return new ListingDetailsDto(isSoldOrUnavailable: true);
+            }
+
+            if (\in_array($statusCode, [403, 429], true)) {
+                $this->providerHealth?->markBlocked($this->getName(), $statusCode, 'Rate-limit / anti-bot response on Vinted item page', self::BLOCK_COOLDOWN_SECONDS);
+
+                return new ListingDetailsDto(rateLimited: true);
+            }
+
+            if (200 !== $statusCode) {
                 return null;
             }
 
@@ -45,17 +89,19 @@ class VintedProvider extends AbstractHttpListingProvider
                 return null;
             }
 
+            $isSoldOrUnavailable = $this->isVintedItemSoldOrClosed($html);
+
             $description = null;
-            if (1 === preg_match('/"description"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/u', $html, $descMatch)) {
-                $decodedDesc = json_decode('"'.$descMatch[1].'"');
+            if (1 === preg_match('/\\\\?"description\\\\?"\s*:\s*\\\\?"((?:[^"\\\\]|\\\\.)*)\\\\?"/u', $html, $descMatch)) {
+                $decodedDesc = json_decode('"'.str_replace('\\"', '"', $descMatch[1]).'"');
                 if (\is_string($decodedDesc) && '' !== trim($decodedDesc)) {
                     $description = trim($decodedDesc);
                 }
             }
 
             $brand = null;
-            if (1 === preg_match('/"brand_title"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/u', $html, $brandMatch)) {
-                $decodedBrand = json_decode('"'.$brandMatch[1].'"');
+            if (1 === preg_match('/\\\\?"brand_title\\\\?"\s*:\s*\\\\?"((?:[^"\\\\]|\\\\.)*)\\\\?"/u', $html, $brandMatch)) {
+                $decodedBrand = json_decode('"'.str_replace('\\"', '"', $brandMatch[1]).'"');
                 if (\is_string($decodedBrand) && '' !== trim($decodedBrand)) {
                     $brand = trim($decodedBrand);
                 }
@@ -75,6 +121,7 @@ class VintedProvider extends AbstractHttpListingProvider
             return new ListingDetailsDto(
                 description: $description,
                 brand: $brand,
+                isSoldOrUnavailable: $isSoldOrUnavailable,
             );
         } catch (\Throwable $e) {
             $this->logger->debug('Failed to fetch Vinted item details.', [
@@ -117,6 +164,13 @@ class VintedProvider extends AbstractHttpListingProvider
                 ],
             ),
             new ProviderOptionDefinition(
+                name: 'exclude_sold',
+                label: 'Exclude Sold / Reserved Ads',
+                type: ProviderOptionDefinition::TYPE_CHECKBOX,
+                default: true,
+                help: 'Skips items flagged as closed, sold, or reserved.',
+            ),
+            new ProviderOptionDefinition(
                 name: 'min_price',
                 label: 'Min Price (EUR)',
                 type: ProviderOptionDefinition::TYPE_NUMBER,
@@ -137,6 +191,14 @@ class VintedProvider extends AbstractHttpListingProvider
     {
         $cleanQuery = trim($query);
         if ('' === $cleanQuery) {
+            return [];
+        }
+
+        if ($this->providerHealth?->isCoolingDown($this->getName())) {
+            $this->logger->info('Skipping Vinted search for "{query}" while provider is in cooldown.', [
+                'query' => $cleanQuery,
+            ]);
+
             return [];
         }
 
@@ -273,7 +335,13 @@ class VintedProvider extends AbstractHttpListingProvider
                 break;
             }
 
-            if ($page > 1) {
+            if ($this->providerHealth?->isCoolingDown($this->getName())) {
+                break;
+            }
+
+            if (null !== $this->providerHealth) {
+                $this->providerHealth->throttle($this->getName(), self::MIN_REQUEST_INTERVAL_MS);
+            } elseif ($page > 1) {
                 usleep(250_000);
             }
 
@@ -291,7 +359,13 @@ class VintedProvider extends AbstractHttpListingProvider
                 'query' => $pageParams,
             ]);
 
-            if (200 !== $webResponse->getStatusCode()) {
+            $statusCode = $webResponse->getStatusCode();
+            if (\in_array($statusCode, [403, 429], true)) {
+                $this->providerHealth?->markBlocked($this->getName(), $statusCode, 'Rate-limit / anti-bot response on Vinted catalog', self::BLOCK_COOLDOWN_SECONDS);
+                break;
+            }
+
+            if (200 !== $statusCode) {
                 break;
             }
 
@@ -420,5 +494,12 @@ class VintedProvider extends AbstractHttpListingProvider
         });
 
         return $listings;
+    }
+
+    private function isVintedItemSoldOrClosed(string $html): bool
+    {
+        return 1 === preg_match('/\\\\?"is_closed\\\\?"\s*:\s*true/i', $html)
+            || 1 === preg_match('/\\\\?"is_reserved\\\\?"\s*:\s*true/i', $html)
+            || 1 === preg_match('/\\\\?"can_buy\\\\?"\s*:\s*false/i', $html);
     }
 }

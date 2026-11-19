@@ -19,6 +19,11 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
     private const API_URL = 'https://api.leboncoin.fr/finder/search';
     private const SHIPPING_TYPES = 'mondial_relay,colissimo,chronopost,shop2shop,relais_colis';
     private const ITEMS_PER_PAGE = 35;
+    private const MIN_REQUEST_INTERVAL_MS = 2500;
+    private const BLOCK_COOLDOWN_SECONDS = 900;
+
+    /** @var list<string> */
+    private const SOLD_TRANSACTION_STATUSES = ['pending', 'sold', 'completed', 'reserved'];
 
     public function __construct(
         HttpClientInterface $httpClient,
@@ -30,6 +35,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
         bool $fallbackToMock = true,
         #[Autowire(env: 'int:LISTING_PROVIDER_MAX_UNLIMITED_PAGES')]
         int $maxUnlimitedPages = 15,
+        private readonly ?ProviderHealthService $providerHealth = null,
     ) {
         parent::__construct(
             $httpClient,
@@ -53,19 +59,42 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
             return null;
         }
 
+        if ($this->providerHealth?->isCoolingDown($this->getName())) {
+            return new ListingDetailsDto(rateLimited: true);
+        }
+
         try {
+            $this->providerHealth?->throttle($this->getName(), self::MIN_REQUEST_INTERVAL_MS);
+
             $response = $this->httpClient->request('GET', $cleanUrl, [
                 'timeout' => 8.0,
                 'headers' => $this->defaultHeaders(),
             ]);
 
-            if (200 !== $response->getStatusCode()) {
+            $statusCode = $response->getStatusCode();
+            if (\in_array($statusCode, [404, 410], true)) {
+                return new ListingDetailsDto(isSoldOrUnavailable: true);
+            }
+
+            if (\in_array($statusCode, [403, 429], true)) {
+                $this->providerHealth?->markBlocked($this->getName(), $statusCode, 'Anti-bot / rate-limit response on ad detail page', self::BLOCK_COOLDOWN_SECONDS);
+
+                return new ListingDetailsDto(rateLimited: true);
+            }
+
+            if (200 !== $statusCode) {
                 return null;
             }
 
             $html = $response->getContent(false);
             if ('' === trim($html)) {
                 return null;
+            }
+
+            if ($this->looksLikeAntiBotChallenge($html)) {
+                $this->providerHealth?->markBlocked($this->getName(), 403, 'Anti-bot challenge detected on ad detail page', self::BLOCK_COOLDOWN_SECONDS);
+
+                return new ListingDetailsDto(rateLimited: true);
             }
 
             $crawler = new Crawler($html, 'https://www.leboncoin.fr');
@@ -87,6 +116,8 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
             if (!\is_array($ad)) {
                 return null;
             }
+
+            $isSold = $this->isAdSoldOrPending($ad);
 
             $body = isset($ad['body']) && \is_string($ad['body']) && '' !== trim($ad['body'])
                 ? trim($ad['body'])
@@ -136,6 +167,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 attributes: $attributes,
                 conditionState: $condition,
                 imageUrls: $images,
+                isSoldOrUnavailable: $isSold,
             );
         } catch (\Throwable $e) {
             $this->logger->debug('Failed to fetch LeBonCoin ad details.', [
@@ -198,6 +230,13 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 max: 200,
             ),
             new ProviderOptionDefinition(
+                name: 'exclude_sold',
+                label: 'Exclude Sold / Pending Ads',
+                type: ProviderOptionDefinition::TYPE_CHECKBOX,
+                default: true,
+                help: 'Skips ads already sold or with an active purchase in progress (transaction_status=pending/sold).',
+            ),
+            new ProviderOptionDefinition(
                 name: 'search_in_title',
                 label: 'Match Keywords in Title Only',
                 type: ProviderOptionDefinition::TYPE_CHECKBOX,
@@ -239,14 +278,27 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
             return [];
         }
 
+        if ($this->providerHealth?->isCoolingDown($this->getName())) {
+            $this->logger->info('Skipping LeBonCoin search for "{query}" while provider is in cooldown.', [
+                'query' => $cleanQuery,
+            ]);
+
+            return [];
+        }
+
         $opts = $this->normalizeOptions($options);
         $effectiveLimit = (null !== $limit && $limit > 0) ? $limit : null;
 
         try {
             $ssrSucceeded = false;
-            $webListings = $this->searchViaWeb($cleanQuery, $maxPrice, $effectiveLimit, $opts, $ssrSucceeded);
+            $ssrBlocked = false;
+            $webListings = $this->searchViaWeb($cleanQuery, $maxPrice, $effectiveLimit, $opts, $ssrSucceeded, $ssrBlocked);
             if ([] !== $webListings) {
                 return $webListings;
+            }
+
+            if ($ssrBlocked) {
+                return $this->fallbackOrEmpty($cleanQuery, $maxPrice, $effectiveLimit, 'HTTP 403/429 anti-bot cooldown triggered');
             }
 
             if ($ssrSucceeded) {
@@ -322,10 +374,11 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
      *
      * @return list<FetchedListingDto>
      */
-    private function searchViaWeb(string $cleanQuery, ?float $maxPrice, ?int $limit, array $opts, bool &$ssrSucceeded = false): array
+    private function searchViaWeb(string $cleanQuery, ?float $maxPrice, ?int $limit, array $opts, bool &$ssrSucceeded = false, bool &$ssrBlocked = false): array
     {
         $allowShipping = (bool) ($opts['allow_shipping'] ?? true);
         $allowNearMe = (bool) ($opts['allow_near_me'] ?? false);
+        $excludeSold = (bool) ($opts['exclude_sold'] ?? true);
         $locationQuery = is_string($opts['location'] ?? null) ? trim($opts['location']) : '';
         $radiusKm = is_numeric($opts['radius_km'] ?? null) ? max(5, min(200, (int) $opts['radius_km'])) : 30;
 
@@ -376,7 +429,13 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 $passLimit,
                 $seenIds,
                 $ssrSucceeded,
+                $ssrBlocked,
+                $excludeSold,
             );
+
+            if ($ssrBlocked) {
+                break;
+            }
 
             foreach ($passResults as $dto) {
                 $listings[] = $dto;
@@ -457,8 +516,14 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
      *
      * @return list<FetchedListingDto>
      */
-    private function crawlWebPages(array $queryParams, ?int $limit, array &$seenIds, bool &$ssrSucceeded = false): array
-    {
+    private function crawlWebPages(
+        array $queryParams,
+        ?int $limit,
+        array &$seenIds,
+        bool &$ssrSucceeded = false,
+        bool &$ssrBlocked = false,
+        bool $excludeSold = true,
+    ): array {
         $collected = [];
         $maxPages = $this->resolveMaxPages($limit, self::ITEMS_PER_PAGE);
 
@@ -467,7 +532,14 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 break;
             }
 
-            if ($page > 1) {
+            if ($this->providerHealth?->isCoolingDown($this->getName())) {
+                $ssrBlocked = true;
+                break;
+            }
+
+            if (null !== $this->providerHealth) {
+                $this->providerHealth->throttle($this->getName(), self::MIN_REQUEST_INTERVAL_MS);
+            } elseif ($page > 1) {
                 usleep(250_000);
             }
 
@@ -482,12 +554,25 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
                 'query' => $pageParams,
             ]);
 
-            if (200 !== $response->getStatusCode()) {
+            $statusCode = $response->getStatusCode();
+            if (\in_array($statusCode, [403, 429], true)) {
+                $ssrBlocked = true;
+                $this->providerHealth?->markBlocked($this->getName(), $statusCode, 'Anti-bot / rate-limit response on search crawl', self::BLOCK_COOLDOWN_SECONDS);
+                break;
+            }
+
+            if (200 !== $statusCode) {
                 break;
             }
 
             $html = $response->getContent(false);
             if ('' === trim($html)) {
+                break;
+            }
+
+            if ($this->looksLikeAntiBotChallenge($html)) {
+                $ssrBlocked = true;
+                $this->providerHealth?->markBlocked($this->getName(), 403, 'Anti-bot challenge page on search crawl', self::BLOCK_COOLDOWN_SECONDS);
                 break;
             }
 
@@ -518,7 +603,6 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
 
             $ssrSucceeded = true;
 
-            // Refine maxPages using LeBonCoin's reported max_pages on page 1
             if (1 === $page && isset($searchData['max_pages']) && is_numeric($searchData['max_pages'])) {
                 $maxPages = $this->resolveMaxPages($limit, self::ITEMS_PER_PAGE, (int) $searchData['max_pages']);
             }
@@ -529,7 +613,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
             }
 
             $remaining = null !== $limit ? ($limit - \count($collected)) : null;
-            $pageParsed = $this->parseAdsArray($ads, $remaining, $seenIds);
+            $pageParsed = $this->parseAdsArray($ads, $remaining, $seenIds, $excludeSold);
             if ([] === $pageParsed) {
                 break;
             }
@@ -548,7 +632,7 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
      *
      * @return list<FetchedListingDto>
      */
-    private function parseAdsArray(array $ads, ?int $limit, array &$seenIds = []): array
+    private function parseAdsArray(array $ads, ?int $limit, array &$seenIds = [], bool $excludeSold = true): array
     {
         $listings = [];
 
@@ -558,6 +642,10 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
             }
 
             if (!\is_array($ad)) {
+                continue;
+            }
+
+            if ($excludeSold && $this->isAdSoldOrPending($ad)) {
                 continue;
             }
 
@@ -622,5 +710,43 @@ class LeBonCoinProvider extends AbstractHttpListingProvider
         }
 
         return $listings;
+    }
+
+    /**
+     * Detects sold, inactive, or purchase-in-progress LeBonCoin ads (e.g. transaction_status=pending).
+     *
+     * @param array<string, mixed> $ad
+     */
+    private function isAdSoldOrPending(array $ad): bool
+    {
+        if (isset($ad['status']) && \is_string($ad['status']) && '' !== $ad['status'] && 'active' !== strtolower($ad['status'])) {
+            return true;
+        }
+
+        if (true === ($ad['is_sold'] ?? false)) {
+            return true;
+        }
+
+        if (isset($ad['attributes']) && \is_array($ad['attributes'])) {
+            foreach ($ad['attributes'] as $attr) {
+                if (!\is_array($attr) || !isset($attr['key']) || !\is_string($attr['key'])) {
+                    continue;
+                }
+                if ('transaction_status' === $attr['key']) {
+                    $val = strtolower(trim((string) ($attr['value'] ?? '')));
+                    if (\in_array($val, self::SOLD_TRANSACTION_STATUSES, true)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function looksLikeAntiBotChallenge(string $html): bool
+    {
+        return !str_contains($html, '__NEXT_DATA__')
+            && (false !== stripos($html, 'datadome') || false !== stripos($html, 'captcha'));
     }
 }

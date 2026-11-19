@@ -20,14 +20,25 @@ data:
       formats:
         - html
         - json
+    outgoing:
+      request_timeout: 5.0
+      max_request_timeout: 7.0
     engines:
+      - name: google
+        disabled: true
+      - name: google cse
+        disabled: true
+      - name: brave
+        disabled: true
+      - name: startpage
+        disabled: true
       - name: duckduckgo
         disabled: false
       - name: bing
         disabled: false
-      - name: brave
-        disabled: false
       - name: wikipedia
+        disabled: false
+      - name: mojeek
         disabled: false
 ---
 apiVersion: apps/v1
