@@ -1,8 +1,8 @@
 {
-    "name": "symfony/skeleton",
+    "name": "mooven/listing-finder",
     "type": "project",
     "license": "MIT",
-    "description": "A minimal Symfony project recommended to create bare bones applications",
+    "description": "Domain-agnostic autonomous Local AI & Agentic second-hand deal intelligence radar built with Symfony 8.1, Ollama, and SearXNG",
     "minimum-stability": "stable",
     "prefer-stable": true,
     "require": {

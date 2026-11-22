@@ -80,6 +80,47 @@ final class SearchPipelineTest extends KernelTestCase
         self::assertSame(DealCategory::MustBuy, DealCategory::fromScore($evaluation->score));
     }
 
+    public function testConfigurableLlmClientFailsFastOnOpenAi429WithLongRetryAfter(): void
+    {
+        $container = self::getContainer();
+        $serializer = $container->get(SerializerInterface::class);
+        $validator = $container->get(ValidatorInterface::class);
+
+        $calls = 0;
+        $mockHttp = new MockHttpClient(function () use (&$calls): MockResponse {
+            ++$calls;
+
+            return new MockResponse('{"error":{"message":"Rate limit reached"}}', [
+                'http_code' => 429,
+                'response_headers' => ['Retry-After: 86'],
+            ]);
+        });
+
+        $client = new ConfigurableLlmClient(
+            httpClient: $mockHttp,
+            serializer: $serializer,
+            validator: $validator,
+            provider: 'openai',
+            baseUrl: 'https://api.groq.com/openai/v1',
+            apiKey: 'test-key',
+            model: 'openai/gpt-oss-120b',
+            visionModel: 'openai/gpt-oss-120b',
+            timeout: 10,
+        );
+
+        $started = microtime(true);
+        try {
+            $client->generateStructured('system', 'user', TopicExpansionResultDto::class);
+            self::fail('Expected RuntimeException on HTTP 429.');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('HTTP 429', $e->getMessage());
+        }
+
+        $elapsed = microtime(true) - $started;
+        self::assertSame(1, $calls, 'Should fail immediately on Retry-After > maxRetrySleepSec without retrying.');
+        self::assertLessThan(1.0, $elapsed, 'Fast fail should not sleep when Retry-After exceeds retry window.');
+    }
+
     public function testEndToEndSearchStartIncrementalCronAndStopCommands(): void
     {
         $kernel = self::bootKernel();

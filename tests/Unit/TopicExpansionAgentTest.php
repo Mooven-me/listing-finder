@@ -5,10 +5,17 @@ declare(strict_types=1);
 namespace App\Tests\Unit;
 
 use App\Dto\Ai\TopicExpansionResultDto;
+use App\Service\Ai\ConfigurableLlmClient;
 use App\Service\Ai\LlmClientInterface;
 use App\Service\Ai\TopicExpansionAgent;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
+use Symfony\Component\Serializer\Encoder\JsonEncoder;
+use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
+use Symfony\Component\Serializer\Serializer;
+use Symfony\Component\Validator\Validation;
 
 final class TopicExpansionAgentTest extends TestCase
 {
@@ -149,5 +156,44 @@ final class TopicExpansionAgentTest extends TestCase
                 sprintf('Expected query "%s" to contain core product noun "switch" or synonym "commutateur".', $query),
             );
         }
+    }
+
+    public function testConfigurableLlmClientFailsFastAndTopicExpansionFallsBackWhenOpenAiReturns429WithLongRetryAfter(): void
+    {
+        $calls = 0;
+        $mockHttp = new MockHttpClient(function () use (&$calls): MockResponse {
+            ++$calls;
+
+            return new MockResponse('{"error":{"message":"Rate limit reached for model"}}', [
+                'http_code' => 429,
+                'response_headers' => ['Retry-After: 86'],
+            ]);
+        });
+
+        $serializer = new Serializer([new ObjectNormalizer()], [new JsonEncoder()]);
+        $validator = Validation::createValidatorBuilder()->enableAttributeMapping()->getValidator();
+
+        $client = new ConfigurableLlmClient(
+            httpClient: $mockHttp,
+            serializer: $serializer,
+            validator: $validator,
+            provider: 'openai',
+            baseUrl: 'https://api.groq.com/openai/v1',
+            apiKey: 'test-key',
+            model: 'openai/gpt-oss-120b',
+            visionModel: 'openai/gpt-oss-120b',
+            timeout: 10,
+        );
+
+        $agent = new TopicExpansionAgent($client, new NullLogger());
+
+        $started = microtime(true);
+        $result = $agent->expandTopic('une carte wifi pcie');
+        $elapsed = microtime(true) - $started;
+
+        self::assertSame(1, $calls, 'Should fail fast on 429 with Retry-After > maxRetrySleepSec without sleeping.');
+        self::assertLessThan(1.0, $elapsed, 'Topic expansion fallback must complete in < 1s without hitting PHP 30s timeout.');
+        self::assertNotEmpty($result->subTopics);
+        self::assertContains('carte wifi pcie', $result->subTopics);
     }
 }

@@ -203,5 +203,24 @@ final class DashboardControllerTest extends WebTestCase
         self::assertIsArray($emptyStatus);
         self::assertSame('completed', $emptyStatus['status']);
         self::assertSame(0, $emptyStatus['total_ads']);
+
+        // 6. Submitting New Search Request form (POST /search/new) expands sub-topics before persisting and creates CronTask
+        $crawler = $client->request('GET', '/');
+        self::assertResponseIsSuccessful();
+        $form = $crawler->filter('#newSearchModal form')->form([
+            'topic' => 'une carte wifi pcie',
+            'target_price' => '35',
+            'interval' => '30',
+        ]);
+        $client->submit($form);
+        self::assertResponseRedirects();
+
+        $createdSearch = static::getContainer()->get(EntityManagerInterface::class)
+            ->getRepository(SearchRequest::class)
+            ->findOneBy(['topic' => 'une carte wifi pcie']);
+        self::assertNotNull($createdSearch);
+        self::assertSame(SearchStatus::Processing, $createdSearch->getStatus());
+        self::assertNotEmpty($createdSearch->getGeneratedSubTopics());
+        self::assertNotNull($createdSearch->getCronTask());
     }
 }

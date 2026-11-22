@@ -141,6 +141,9 @@ final class ConfigurableLlmClient implements LlmClientInterface
             return;
         }
 
+        $isCli = \in_array(\PHP_SAPI, ['cli', 'phpdbg'], true);
+        $effectiveIntervalMs = $isCli ? $this->minRequestIntervalMs : min($this->minRequestIntervalMs, 2000);
+
         $now = microtime(true);
         $last = $this->lastRequestAt;
 
@@ -159,8 +162,8 @@ final class ConfigurableLlmClient implements LlmClientInterface
         }
 
         $elapsedMs = ($now - $last) * 1000.0;
-        if ($last > 0.0 && $elapsedMs < $this->minRequestIntervalMs) {
-            $sleepUs = (int) round(($this->minRequestIntervalMs - $elapsedMs) * 1000.0);
+        if ($last > 0.0 && $elapsedMs < $effectiveIntervalMs) {
+            $sleepUs = (int) round(($effectiveIntervalMs - $elapsedMs) * 1000.0);
             if ($sleepUs > 0) {
                 usleep($sleepUs);
             }
@@ -288,8 +291,9 @@ final class ConfigurableLlmClient implements LlmClientInterface
         array $userMessage,
         string $dtoClass,
     ): array {
+        $isCli = \in_array(\PHP_SAPI, ['cli', 'phpdbg'], true);
         $response = $this->httpClient->request('POST', $endpoint, [
-            'timeout' => $this->timeout,
+            'timeout' => $isCli ? $this->timeout : min($this->timeout, 15),
             'json' => [
                 'model' => $model,
                 'stream' => false,
@@ -538,13 +542,18 @@ final class ConfigurableLlmClient implements LlmClientInterface
             $endpoint = rtrim($this->baseUrl, '/').'/v1/chat/completions';
         }
 
-        $maxAttempts = 3;
+        $isCli = \in_array(\PHP_SAPI, ['cli', 'phpdbg'], true);
+        $maxAttempts = $isCli ? 3 : 2;
+        $requestTimeout = $isCli ? $this->timeout : min($this->timeout, 10);
+        $maxRetrySleepSec = $isCli ? 10 : 3;
+        $maxWallClockBudgetSec = $isCli ? max(15.0, (float) $this->timeout) : 12.0;
+        $startedAt = microtime(true);
         $payload = null;
 
         for ($attempt = 1; $attempt <= $maxAttempts; ++$attempt) {
             try {
                 $response = $this->httpClient->request('POST', $endpoint, [
-                    'timeout' => $this->timeout,
+                    'timeout' => $requestTimeout,
                     'headers' => $headers,
                     'json' => [
                         'model' => $model,
@@ -564,29 +573,61 @@ final class ConfigurableLlmClient implements LlmClientInterface
                 ]);
 
                 $statusCode = $response->getStatusCode();
-                if (429 === $statusCode && $attempt < $maxAttempts) {
-                    $respHeaders = $response->getHeaders(false);
-                    $retryAfterRaw = $respHeaders['retry-after'][0] ?? null;
-                    $sleepSeconds = is_numeric($retryAfterRaw) ? max(1, min(15, (int) ceil((float) $retryAfterRaw))) : ($attempt * 3);
+            } catch (\Throwable $e) {
+                $elapsed = microtime(true) - $startedAt;
+                $retrySleep = min($maxRetrySleepSec, $attempt * 2);
+                if ($attempt >= $maxAttempts || ($elapsed + $retrySleep + 1.0) >= $maxWallClockBudgetSec) {
+                    throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
+                }
+                sleep($retrySleep);
+
+                continue;
+            }
+
+            if (429 === $statusCode && $attempt < $maxAttempts) {
+                $respHeaders = $response->getHeaders(false);
+                $retryAfterRaw = $respHeaders['retry-after'][0] ?? null;
+
+                // Fail fast if upstream Retry-After exceeds our retry window (e.g. daily RPD quota exhausted)
+                if (is_numeric($retryAfterRaw) && (float) $retryAfterRaw > $maxRetrySleepSec) {
+                    $errBody = mb_strimwidth($response->getContent(false), 0, 300, '...');
+                    throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: HTTP 429 (Retry-After %ss): %s', $endpoint, (string) $retryAfterRaw, $errBody));
+                }
+
+                $sleepSeconds = is_numeric($retryAfterRaw)
+                    ? max(1, min($maxRetrySleepSec, (int) ceil((float) $retryAfterRaw)))
+                    : min($maxRetrySleepSec, $attempt * 2);
+
+                $elapsed = microtime(true) - $startedAt;
+                if (($elapsed + $sleepSeconds + 1.0) < $maxWallClockBudgetSec) {
                     sleep($sleepSeconds);
 
                     continue;
                 }
+            }
 
-                if ($statusCode >= 400) {
-                    $errBody = mb_strimwidth($response->getContent(false), 0, 300, '...');
-                    throw new \RuntimeException(sprintf('HTTP %d from "%s": %s', $statusCode, $endpoint, $errBody));
+            if ($statusCode >= 500 && $attempt < $maxAttempts) {
+                $retrySleep = min($maxRetrySleepSec, $attempt * 2);
+                $elapsed = microtime(true) - $startedAt;
+                if (($elapsed + $retrySleep + 1.0) < $maxWallClockBudgetSec) {
+                    sleep($retrySleep);
+
+                    continue;
                 }
+            }
 
+            if ($statusCode >= 400) {
+                $errBody = mb_strimwidth($response->getContent(false), 0, 300, '...');
+                throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: HTTP %d from "%s": %s', $endpoint, $statusCode, $endpoint, $errBody));
+            }
+
+            try {
                 /** @var array<string, mixed> $decoded */
                 $decoded = $response->toArray(false);
                 $payload = $decoded;
                 break;
             } catch (\Throwable $e) {
-                if ($attempt >= $maxAttempts) {
-                    throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
-                }
-                sleep($attempt * 2);
+                throw new \RuntimeException(sprintf('OpenAI-compatible request to "%s" failed: %s', $endpoint, $e->getMessage()), 0, $e);
             }
         }
 

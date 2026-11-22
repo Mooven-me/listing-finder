@@ -10,7 +10,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: listing-finder.zt.home.arpa
+    - host: listing-finder.home.arpa
       http:
         paths:
           - path: /

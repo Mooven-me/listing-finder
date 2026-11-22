@@ -241,6 +241,8 @@ class DashboardController extends AbstractController
         $shortTopic = mb_substr($normalizedOneLine, 0, 250);
         $extraDetails = mb_strlen($dto->topic) > 250 || str_contains($dto->topic, "\n") ? $dto->topic : null;
 
+        $expansion = $this->topicExpansionAgent->expandTopic($dto->topic, null, $dto->subTopicsCount);
+
         $searchRequest = new SearchRequest(
             topic: $shortTopic,
             targetPrice: $dto->targetPrice,
@@ -249,11 +251,6 @@ class DashboardController extends AbstractController
             enabledProviders: $providerNames,
             providerOptions: $normalizedProviderOptions,
         );
-        $searchRequest->setStatus(SearchStatus::Expanding);
-        $this->entityManager->persist($searchRequest);
-        $this->entityManager->flush();
-
-        $expansion = $this->topicExpansionAgent->expandTopic($dto->topic, null, $dto->subTopicsCount);
         $searchRequest->setGeneratedSubTopics($expansion->subTopics);
         $searchRequest->setStatus(SearchStatus::Processing);
 
@@ -263,6 +260,7 @@ class DashboardController extends AbstractController
             limitPerSubTopic: $dto->limitPerSubTopic,
         );
         $searchRequest->setCronTask($cronTask);
+        $this->entityManager->persist($searchRequest);
         $this->entityManager->persist($cronTask);
         $this->entityManager->flush();
 

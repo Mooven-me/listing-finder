@@ -8,7 +8,11 @@
 
 ## Table of Contents
 
-1. [How to Create and Install the Project](#1-how-to-create-and-install-the-project)
+1. [Agentic AI Architecture & Local GPU Sizing](#0-agentic-ai-architecture--local-gpu-sizing)
+   - [0.1 Autonomous Multi-Stage Agent Pipeline](#01-autonomous-multi-stage-agent-pipeline)
+   - [0.2 Why Local AI Execution Matters for 24/7 Deal Hunting](#02-why-local-ai-execution-matters-for-247-deal-hunting)
+   - [0.3 Recommended Local GPU Hardware & VRAM Sizing](#03-recommended-local-gpu-hardware--vram-sizing)
+2. [How to Create and Install the Project](#1-how-to-create-and-install-the-project)
    - [1.1 Prerequisites](#11-prerequisites)
    - [1.2 Step 1: Clone the Repository](#12-step-1-clone-the-repository)
    - [1.3 Step 2: Configure the AI Provider](#13-step-2-configure-the-ai-provider)
@@ -16,13 +20,65 @@
    - [1.5 Step 4: Verify the Stack and Access the Dashboard](#15-step-4-verify-the-stack-and-access-the-dashboard)
    - [1.6 Production Deployment Topologies](#16-production-deployment-topologies)
    - [1.7 Environment Variables Reference](#17-environment-variables-reference)
-2. [How to Use the Software (Deep Tutorial)](#2-how-to-use-the-software-deep-tutorial)
+3. [How to Use the Software (Deep Tutorial)](#2-how-to-use-the-software-deep-tutorial)
    - [2.1 Creating a Search Request](#21-creating-a-search-request)
    - [2.2 How the Two-Stage AI Pipeline Evaluates Listings](#22-how-the-two-stage-ai-pipeline-evaluates-listings)
    - [2.3 Navigating the Web Dashboard and Visual Analytics](#23-navigating-the-web-dashboard-and-visual-analytics)
    - [2.4 Browsing, Filtering, and Managing Deals](#24-browsing-filtering-and-managing-deals)
    - [2.5 Managing Recurring Cron Monitoring and Availability Checks](#25-managing-recurring-cron-monitoring-and-availability-checks)
    - [2.6 Command-Line Interface (CLI) Reference](#26-command-line-interface-cli-reference)
+
+---
+
+## 0. Agentic AI Architecture & Local GPU Sizing
+
+### 0.1 Autonomous Multi-Stage Agent Pipeline
+
+Listing Finder operates as a continuous, domain-agnostic autonomous agent loop. Rather than sending raw marketplace pages into a single monolithic prompt, it orchestrates specialized agent stages, deterministic anti-hallucination guardrails, lazy detail-page enrichment, and self-hosted web datasheet verification (**SearXNG**):
+
+```mermaid
+flowchart TD
+    UserSpec["Buyer Product Specification & Target Budget (EUR)"] --> TopicAgent["Stage 0: TopicExpansionAgent<br/>Core-Noun Extraction & High-Recall Strict-AND Queries"]
+    TopicAgent --> Dispatcher["SearchDispatcherService & 30-Min Symfony Scheduler"]
+    Dispatcher --> Providers["Marketplace Providers (LeBonCoin, Vinted, BackMarket)<br/>Polite Pacing & 15-Min Anti-Bot Circuit Breaker"]
+    Providers --> LockDedup["PostgreSQL Upsert & Symfony Lock Deduplication"]
+    LockDedup --> Stage1["Stage 1: Core-Product Gatekeeper (Pre-Scrape Filter)<br/>1. Zero-LLM Multilingual Accessory Guard<br/>2. Fast Micro-LLM Product-Type Classification"]
+    Stage1 -- "Accessory / Wrong Category" --> FastReject["Immediate POOR Rejection (<= 10/100)<br/>0 Detail HTTP Requests & 0 SearXNG Calls Wasted"]
+    Stage1 -- "Core Product Confirmed" --> Enrichment["Lazy Detail-Page Scraping & Sold/Pending Detection"]
+    Enrichment -- "Active Listing" --> SearXNG["Self-Hosted SearXNG Datasheet RAG<br/>Model Code Specification Lookup (7-Day Cache)"]
+    SearXNG --> Stage2["Stage 2: Reasoning-First & Multimodal Vision Evaluator<br/>Strict JSON Schema (Reasoning Emitted First)"]
+    Stage2 --> Calibration["Deterministic Post-LLM Calibration Guardrails<br/>Spec Verification, Defective Caps & Price-Ratio Ceilings"]
+    Calibration --> Dashboard["5-Tier Deal Classification & Real-Time Chart.js Dashboard"]
+```
+
+### 0.2 Why Local AI Execution Matters for 24/7 Deal Hunting
+
+Running an autonomous marketplace radar places unique demands on LLM inference that make **Local AI (Ollama / vLLM on a dedicated GPU)** vastly superior to rate-limited cloud APIs:
+
+1. **High Inference Volume Without Rate-Limit Bottlenecks**:
+   - A single multi-page search across 6 to 8 generated sub-topics typically discovers **1,000 to 1,500 unique listings**, followed by recurring incremental cron sweeps every 30 minutes.
+   - On a free-tier cloud API limited to `30 RPM` / `8,000 TPM`, outbound requests must be throttled to `AI_MIN_REQUEST_INTERVAL_MS=9000` (1 request every 9 seconds), meaning an initial 1,200-listing evaluation wave takes **over 3.5 hours**.
+   - On a **Local GPU with Ollama** (`AI_MIN_REQUEST_INTERVAL_MS=0`), the agent runs completely unthrottled at full GPU throughput with **zero per-token API cost**, evaluating the same wave up to **15x–30x faster**.
+2. **Multimodal Vision AI Inspection on Listing Photos**:
+   - Second-hand listings frequently omit crucial visual details from the text description (physical damage, missing connectors, empty retail boxes, or a model sticker that contradicts the title).
+   - Local multimodal vision-language models (`gemma3`, `qwen2.5-vl`, `llama3.2-vision`, `lfm2.5`) inspect listing thumbnails directly on your GPU when `AI_VISION_ENABLED=auto`.
+3. **100% Self-Hosted Data Sovereignty**:
+   - The entire intelligence stack — **Ollama** (local LLM/VLM inference), **SearXNG** (self-hosted meta-search for technical datasheets), **PostgreSQL 16**, and **FrankenPHP** — runs locally on your hardware without exposing search habits or purchasing thresholds to external third parties.
+
+### 0.3 Recommended Local GPU Hardware & VRAM Sizing
+
+Because the worker evaluates listings continuously alongside a self-hosted SearXNG datasheet RAG (`AI_NUM_CTX=8192` to `32768`), available **GPU VRAM** directly determines model reasoning depth, multimodal Vision AI capability, and parallel worker concurrency:
+
+| Hardware Tier | Available VRAM | Recommended Local Models (Ollama) | Context Window (`AI_NUM_CTX`) | Vision AI Photo Inspection | Optimal Worker Concurrency & Workload Fit |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Entry Local GPU** | `8 GB – 12 GB VRAM` | `lfm2.5:8b`, `qwen2.5:7b`, `llama3.1:8b` (`Q4_K_M`) | `8192` | Optional (lightweight 7B/8B VLM) | **1 Worker**: Reliable local text & datasheet evaluation with zero cloud latency or rate limits. |
+| **High-Performance Developer GPU** | `16 GB VRAM` | `gemma3:12b`, `qwen2.5:14b`, `qwen2.5-vl:7b`, `llama3.2-vision:11b` | `16384` | **Enabled (`auto` / `true`)** | **1–2 Workers**: High-speed token generation with stronger 12B–14B multi-branch spec reasoning and live Vision AI photo inspection. |
+| **Workstation / High-End AI GPU** | `24 GB – 32 GB+ VRAM` | `qwen2.5-vl:32b`, `gemma3:27b`, `qwen2.5:32b`, `llama3.3:70b-iq4` | `32768` | **Enabled (High-Res Multimodal)** | **2–4 Parallel Workers**: Maximum specification verification accuracy on complex technical datasheets and simultaneous multi-search processing. |
+
+> **Built-in Pipeline & Hardware Benchmark**: You can measure your local GPU's end-to-end latency across Stage 0, Stage 1, and Stage 2 and view projected 1,000-listing throughput at any time by running:
+> ```bash
+> docker compose exec php php bin/console app:ai:benchmark
+> ```
 
 ---
 
@@ -396,8 +452,6 @@ The animated preview below demonstrates browsing evaluated deals, switching page
 
 ![Browsing and Filtering Deals in Listing Finder](docs/listing-finder_browsing_preview.gif)
 
-*High-resolution compressed MP4 video: [docs/listing-finder_browsing_preview.mp4](docs/listing-finder_browsing_preview.mp4)*
-
 #### 1. Using the Sticky Filter & Sort Toolbar
 
 As you scroll down through results, the filter toolbar stays pinned to the top of the viewport:
@@ -575,7 +629,24 @@ docker compose exec php php bin/console app:search:stop 19
 docker compose exec php php bin/console app:search:stop 19 --purge
 ```
 
-#### 5. Run the Background Messenger Worker (`messenger:consume`)
+#### 5. Benchmark the Agentic AI Pipeline & Local Hardware (`app:ai:benchmark`)
+
+Verifies your active LLM/VLM connection and runs an instant end-to-end benchmark of Stage 0 (`TopicExpansionAgent`), Stage 1 (`checkCoreProductGatekeeper` on an unrequested accessory trap), and Stage 2 (`ListingEvaluatorAgent::evaluate` with post-LLM calibration guardrails), printing per-stage latencies and a 1,000-listing throughput projection across Local GPU VRAM tiers:
+
+```bash
+# Run the interactive CLI benchmark with default GPU specification (350 EUR target)
+docker compose exec php php bin/console app:ai:benchmark
+
+# Benchmark a custom product specification and target budget
+docker compose exec php php bin/console app:ai:benchmark \
+  --spec="Switch reseau manageable avec 8 ports Gigabit RJ45 et 2 cages SFP+ 10GbE" \
+  --price=110
+
+# Export structured benchmark telemetry as JSON
+docker compose exec php php bin/console app:ai:benchmark --json
+```
+
+#### 6. Run the Background Messenger Worker (`messenger:consume`)
 
 In Docker Compose and Kubernetes, the `worker` container runs this command automatically. If you are running PHP directly on the host during debugging, start the worker with:
 

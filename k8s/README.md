@@ -32,7 +32,7 @@ kubectl -n listing-finder rollout status deployment/searxng
 
 ## 4. Access the Dashboard
 
-- Via DNS (if configured in your local DNS / Technitium): `https://listing-finder.zt.home.arpa` or `http://listing-finder.zt.home.arpa`
+- Via DNS (if configured in your local DNS): `https://listing-finder.home.arpa` or `http://listing-finder.home.arpa`
 - Via your k3s node IP directly (through Traefik): `https://<node-ip>/` or `http://<node-ip>/`
 
 ## 5. Run Console Commands in k8s
