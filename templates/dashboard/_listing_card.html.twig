@@ -1,0 +1,176 @@
+{# Professional Listing Card Partial — Zero Emojis, Restrained Palette #}
+{# @var eval \App\Entity\ListingEvaluation #}
+{% set listing = eval.listing %}
+{% set score = eval.scoreOutOf100 %}
+{% set category = eval.category.value %}
+{% set targetPrice = active_search.targetPrice %}
+{% set priceDiff = targetPrice > 0 ? (((listing.price - targetPrice) / targetPrice) * 100)|round : 0 %}
+{% set isUnseen = active_search.lastViewedAt ? (eval.evaluatedAt > active_search.lastViewedAt) : false %}
+
+{% set accentBorder = category == 'must_buy'
+    ? 'border-emerald-700/70 hover:border-emerald-500/80'
+    : (category == 'extremely_good'
+        ? 'border-sky-800/70 hover:border-sky-600/80'
+        : (category == 'good'
+            ? 'border-zinc-700 hover:border-zinc-500'
+            : (category == 'bad' ? 'border-amber-900/60 hover:border-amber-700/70' : 'border-zinc-800/90 hover:border-zinc-700')))
+%}
+
+{% set tierBadgeClass = category == 'must_buy'
+    ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+    : (category == 'extremely_good'
+        ? 'bg-sky-950 text-sky-300 border-sky-800'
+        : (category == 'good'
+            ? 'bg-zinc-800 text-zinc-200 border-zinc-700'
+            : (category == 'bad' ? 'bg-amber-950/70 text-amber-300 border-amber-800/70' : 'bg-rose-950/60 text-rose-300 border-rose-900/70')))
+%}
+
+{% set scoreTextClass = category == 'must_buy'
+    ? 'text-emerald-400'
+    : (category == 'extremely_good'
+        ? 'text-sky-400'
+        : (category == 'good'
+            ? 'text-zinc-100'
+            : (category == 'bad' ? 'text-amber-400' : 'text-rose-400')))
+%}
+
+<article class="flex flex-col rounded-lg border {{ accentBorder }} bg-zinc-900/70 transition-colors overflow-hidden">
+    {# Header #}
+    <div class="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800/80 bg-zinc-950/50">
+        <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-mono text-[11px] text-zinc-500">#{{ rank }}</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium uppercase tracking-wide bg-zinc-800/90 text-zinc-200 border border-zinc-700/80">
+                {{ listing.provider }}
+            </span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium uppercase tracking-wide border {{ tierBadgeClass }}">
+                {{ eval.category.shortLabel }}
+            </span>
+            {% if isUnseen %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wide bg-cyan-950 text-cyan-300 border border-cyan-800">NEW</span>
+            {% endif %}
+            {% if listing.isSold %}
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wide bg-zinc-800 text-zinc-400 border border-zinc-700 line-through">SOLD</span>
+            {% endif %}
+            {% if eval.isWorking is same as(true) %}
+                <span class="text-[11px] font-mono text-zinc-400">Functional</span>
+            {% elseif eval.isWorking is same as(false) %}
+                <span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-rose-950/80 text-rose-300 border border-rose-900">Defective / HS</span>
+            {% endif %}
+        </div>
+
+        <div class="flex items-baseline gap-1 font-mono">
+            <span class="text-base font-semibold {{ scoreTextClass }}">{{ score }}</span>
+            <span class="text-[11px] text-zinc-500">/100</span>
+        </div>
+    </div>
+
+    {# Body #}
+    <div class="p-4 flex-1 flex flex-col gap-3.5">
+        <div class="flex gap-3.5">
+            {# Thumbnail #}
+            <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-md overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0">
+                {% if listing.imageUrls is not empty %}
+                    <img
+                        src="{{ listing.imageUrls[0] }}"
+                        alt="{{ listing.title }}"
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                        class="w-full h-full object-cover"
+                        onerror="this.onerror=null;this.parentElement.innerHTML='<div class=\'w-full h-full flex items-center justify-center text-zinc-600 text-[10px] font-mono uppercase\'>No photo</div>';"
+                    >
+                {% else %}
+                    <div class="w-full h-full flex items-center justify-center text-zinc-600 text-[10px] font-mono uppercase">
+                        No photo
+                    </div>
+                {% endif %}
+            </div>
+
+            {# Details #}
+            <div class="flex-1 min-w-0 flex flex-col justify-between">
+                <div>
+                    <a href="{{ listing.url }}" target="_blank" rel="noopener noreferrer" class="text-sm font-semibold text-zinc-100 hover:text-white hover:underline line-clamp-2 leading-snug">
+                        {{ listing.title }}
+                    </a>
+                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400">
+                        {% if listing.conditionState %}
+                            <span class="px-1.5 py-0.5 rounded bg-zinc-800/70 text-zinc-300">{{ listing.conditionState }}</span>
+                        {% endif %}
+                        {% if eval.estimatedAge %}
+                            <span class="px-1.5 py-0.5 rounded bg-zinc-800/50 text-zinc-400 font-mono">Age: {{ eval.estimatedAge }}</span>
+                        {% endif %}
+                        <span class="px-1.5 py-0.5 rounded bg-zinc-950 text-zinc-400 border border-zinc-800 font-mono">
+                            {{ listing.searchTopicUsed }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="mt-2.5 flex items-baseline justify-between gap-2 flex-wrap">
+                    <div class="flex items-baseline gap-2">
+                        <span class="text-lg font-semibold font-mono text-zinc-100">
+                            {{ listing.price|number_format(2, '.', ' ') }} {{ listing.currency }}
+                        </span>
+                        <span class="text-[11px] font-mono text-zinc-500">
+                            target {{ targetPrice|number_format(0) }} EUR
+                        </span>
+                    </div>
+
+                    {% if priceDiff < 0 %}
+                        <span class="text-[11px] font-mono text-emerald-400">{{ priceDiff }}% vs target</span>
+                    {% elseif priceDiff == 0 %}
+                        <span class="text-[11px] font-mono text-zinc-400">at target</span>
+                    {% else %}
+                        <span class="text-[11px] font-mono text-amber-400">+{{ priceDiff }}% vs target</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {# 4 Sub-Scores Bar #}
+        <div class="grid grid-cols-4 gap-2 px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+            {% set subScores = [
+                {'label': 'Relevance', 'val': eval.relevanceScore},
+                {'label': 'Price', 'val': eval.priceScore},
+                {'label': 'Condition', 'val': eval.workingConditionScore},
+                {'label': 'Age', 'val': eval.productAgeScore}
+            ] %}
+            {% for item in subScores %}
+                <div>
+                    <div class="flex justify-between text-[10px] font-mono mb-1">
+                        <span class="text-zinc-500">{{ item.label }}</span>
+                        <span class="text-zinc-200">{{ item.val }}</span>
+                    </div>
+                    <div class="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
+                        <div class="h-full {{ item.val >= 70 ? 'bg-zinc-200' : (item.val >= 40 ? 'bg-zinc-500' : 'bg-rose-500/80') }}" style="width: {{ item.val }}%"></div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+
+        {# AI Appraisal Box #}
+        <div class="rounded-md bg-zinc-950/90 border border-zinc-800/90 border-l-2 border-l-zinc-400 p-3 text-xs text-zinc-300">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                    AI Appraisal{% if eval.imageAnalyzed %} (Vision){% endif %}
+                </span>
+                <span class="text-[10px] font-mono text-zinc-500">{{ eval.evaluatedAt|date('Y-m-d H:i') }}</span>
+            </div>
+            <p class="leading-relaxed text-zinc-300">
+                {{ eval.aiReasoning }}
+            </p>
+        </div>
+    </div>
+
+    {# Footer #}
+    <div class="px-4 py-2 bg-zinc-950/60 border-t border-zinc-800/80 flex items-center justify-between text-[11px]">
+        <span class="font-mono text-zinc-500 truncate max-w-[180px]" title="{{ listing.externalId }}">ID {{ listing.externalId }}</span>
+        <a
+            href="{{ listing.url }}"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950 transition-colors"
+        >
+            <span>Open listing</span>
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M7 7h10v10"/></svg>
+        </a>
+    </div>
+</article>

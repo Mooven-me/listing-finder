@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: listing-finder-config
+  namespace: listing-finder
+data:
+  APP_ENV: "prod"
+  SERVER_NAME: ":80"
+  CADDY_GLOBAL_OPTIONS: "auto_https off"
+  DEFAULT_URI: "http://listing-finder.zt.home.arpa"
+  MESSENGER_TRANSPORT_DSN: "doctrine://default?auto_setup=0"
+  LOCK_DSN: "flock"
+  AI_PROVIDER: "openai"
+  # Groq OpenAI-compatible API (API key stored privately in listing-finder-secret -> AI_API_KEY)
+  AI_BASE_URL: "https://api.groq.com/openai/v1"
+  AI_MODEL: "openai/gpt-oss-120b"
+  AI_VISION_MODEL: "openai/gpt-oss-120b"
+  AI_VISION_ENABLED: "false"
+  AI_TIMEOUT: "60"
+  AI_NUM_CTX: "8192"
+  # Pace LLM requests safely under Groq's 8,000 TPM / 30 RPM free-tier limits
+  AI_MIN_REQUEST_INTERVAL_MS: "9000"
+  SEARXNG_BASE_URL: "http://searxng:8080"
+  SEARXNG_TIMEOUT: "8"
+  LISTING_PROVIDERS_ENABLED: "leboncoin,vinted,backmarket"
+  LISTING_PROVIDER_FALLBACK_TO_MOCK: "false"
+  LISTING_PROVIDER_MAX_UNLIMITED_PAGES: "5"
+  MERCURE_URL: "http://listing-finder-web/.well-known/mercure"
+  MERCURE_PUBLIC_URL: "https://listing-finder.zt.home.arpa/.well-known/mercure"
+  MERCURE_JWT_ISSUER: "https://listing-finder.zt.home.arpa"
+  MERCURE_TRUSTED_ISSUERS: "https://listing-finder.zt.home.arpa"

@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: listing-finder
+  namespace: listing-finder
+  labels:
+    app.kubernetes.io/name: listing-finder
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: listing-finder.zt.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: listing-finder-web
+                port:
+                  name: http
+    # Fallback rule so accessing the server by LAN/ZeroTier IP directly also routes to the dashboard
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: listing-finder-web
+                port:
+                  name: http

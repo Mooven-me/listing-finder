@@ -1,0 +1,1352 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}
+    {% if active_search %}
+        {{ active_search.topic }} (#{{ active_search.id }}) — Listing Finder
+    {% else %}
+        Listing Finder — Deal Intelligence
+    {% endif %}
+{% endblock %}
+
+{% block body %}
+{% set baseParams = active_search ? {
+    'search': active_search.id,
+    'sort': filter.sort,
+    'category': filter.category,
+    'provider': filter.provider,
+    'subTopic': filter.subTopic,
+    'q': filter.q,
+    'maxPrice': filter.maxPrice,
+    'onlyWorking': filter.onlyWorking ? 1 : null,
+    'showPoor': filter.showPoor ? 1 : null,
+    'onlyNew': filter.onlyNew ? 1 : null,
+    'showSold': filter.showSold ? 1 : null,
+    'view': filter.view,
+    'perPage': filter.normalizedPerPage
+} : {} %}
+
+<div class="min-h-screen flex flex-col lg:flex-row bg-zinc-950 text-zinc-100">
+    {# ==================== LEFT SIDEBAR ==================== #}
+    <aside class="w-full lg:w-72 xl:w-80 shrink-0 bg-zinc-900/60 border-b lg:border-b-0 lg:border-r border-zinc-800/90 flex flex-col lg:h-screen lg:sticky lg:top-0">
+        {# Brand Header #}
+        <div class="px-4 py-4 border-b border-zinc-800/90 flex items-center justify-between">
+            <a href="{{ path('app_dashboard') }}" class="flex items-center gap-2.5 group">
+                <div class="w-8 h-8 rounded-md bg-zinc-100 text-zinc-950 flex items-center justify-center">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-sm font-semibold tracking-tight text-zinc-100">Listing Finder</h1>
+                    <p class="text-[11px] font-mono text-zinc-500">{{ global_stats.ai_model }}</p>
+                </div>
+            </a>
+            <button
+                type="button"
+                onclick="document.getElementById('newSearchModal').classList.remove('hidden')"
+                class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950 transition-colors"
+            >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+                <span>New</span>
+            </button>
+        </div>
+
+        {# Live Global Telemetry Bar #}
+        <div class="px-4 py-3 border-b border-zinc-800/90 bg-zinc-950/40">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Live Telemetry</span>
+                <span class="inline-flex items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+                    <span id="livePulseDot" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    <span id="liveLastSync">Synced</span>
+                </span>
+            </div>
+            <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="p-2 rounded-md bg-zinc-900 border border-zinc-800">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Total Ads</div>
+                    <div class="text-sm font-semibold font-mono text-zinc-100" id="globalTotalAds">{{ global_stats.total_listings }}</div>
+                </div>
+                <div class="p-2 rounded-md bg-zinc-900 border border-zinc-800">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Evaluated</div>
+                    <div class="text-sm font-semibold font-mono text-zinc-100" id="globalEvaluatedCount">{{ global_stats.total_evaluated }}</div>
+                </div>
+                <div class="p-2 rounded-md bg-zinc-900 border border-zinc-800">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Queue</div>
+                    <div class="text-sm font-semibold font-mono {{ global_stats.queued_messages > 0 ? 'text-amber-400' : 'text-emerald-400' }}" id="globalQueueCount">
+                        {{ global_stats.queued_messages }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Saved Searches List #}
+        <div class="p-3 flex-1 overflow-y-auto space-y-1.5">
+            <div class="px-1.5 py-1 flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-500">
+                <span>Searches ({{ searches_summaries|length }})</span>
+                <span id="globalActiveCrons">{{ global_stats.active_crons }} cron</span>
+            </div>
+
+            {% for item in searches_summaries %}
+                {% set s = item.entity %}
+                {% set isCurrent = active_search and active_search.id == s.id %}
+                <a
+                    href="{{ path('app_dashboard', {'search': s.id, 'sort': filter.sort, 'view': filter.view}) }}"
+                    class="block p-3 rounded-lg border transition-colors {{ isCurrent
+                        ? 'bg-zinc-900 border-zinc-600'
+                        : 'bg-zinc-950/40 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-900/50' }}"
+                >
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="font-medium text-xs text-zinc-100 line-clamp-1">
+                            #{{ s.id }} {{ s.topic }}
+                        </div>
+                        <span class="shrink-0 font-mono text-[11px] text-zinc-400">
+                            {{ s.targetPrice|number_format(0) }} EUR
+                        </span>
+                    </div>
+
+                    <div class="mt-2 flex items-center justify-between text-[11px] text-zinc-500 font-mono">
+                        <span>{{ item.evaluated_ads }}/{{ item.total_ads }}</span>
+                        <div class="flex items-center gap-1.5">
+                            {% if item.must_buy_count > 0 %}
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900 text-[10px]">
+                                    MB {{ item.must_buy_count }}
+                                </span>
+                            {% endif %}
+                            {% if item.extremely_good_count > 0 %}
+                                <span class="px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-900 text-[10px]">
+                                    EG {{ item.extremely_good_count }}
+                                </span>
+                            {% endif %}
+                            <span class="w-1.5 h-1.5 rounded-full {{ s.cronTask ? 'bg-emerald-500' : 'bg-zinc-700' }}" title="{{ s.cronTask ? 'Cron Active' : 'Cron Paused' }}"></span>
+                        </div>
+                    </div>
+
+                    <div class="mt-2 w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
+                        <div class="h-full bg-zinc-300" style="width: {{ item.progress_percent }}%"></div>
+                    </div>
+                </a>
+            {% else %}
+                <div class="p-6 text-center text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-lg">
+                    No search requests configured. Click "New" to start.
+                </div>
+            {% endfor %}
+        </div>
+
+        {# Sidebar Footer #}
+        <div class="px-4 py-3 border-t border-zinc-800/90 bg-zinc-950/50 text-[11px] font-mono text-zinc-500 flex items-center justify-between">
+            <span>Engine: <span class="text-zinc-300">{{ global_stats.ai_provider|upper }}</span></span>
+            <button type="button" id="toggleAutoRefreshBtn" class="text-[10px] px-2 py-0.5 rounded border border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+                Auto-refresh: ON
+            </button>
+        </div>
+    </aside>
+
+    {# ==================== MAIN CONTENT ==================== #}
+    <main class="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 space-y-6">
+        {# Flash Notifications #}
+        {% for label, messages in app.flashes %}
+            {% for message in messages %}
+                {% set alertStyle = label == 'error'
+                    ? 'bg-rose-950/60 border-rose-900 text-rose-200'
+                    : (label == 'success' ? 'bg-emerald-950/50 border-emerald-900 text-emerald-200' : 'bg-zinc-900 border-zinc-700 text-zinc-200')
+                %}
+                <div class="px-4 py-3 rounded-lg border {{ alertStyle }} flex items-center justify-between text-xs font-mono">
+                    <span>{{ message }}</span>
+                    <button type="button" onclick="this.parentElement.remove()" class="text-zinc-400 hover:text-white ml-4">Dismiss</button>
+                </div>
+            {% endfor %}
+        {% endfor %}
+
+        {% if active_search and analytics %}
+            {# Provider Cooldown / Anti-Bot Health Banner #}
+            <div id="providerHealthBanner" class="{{ provider_health is empty ? 'hidden' : '' }} space-y-2">
+                {% for blk in provider_health %}
+                    <div class="px-4 py-2.5 rounded-lg border border-amber-800/80 bg-amber-950/50 text-amber-200 text-xs font-mono flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                            <strong class="uppercase">{{ blk.provider }}</strong> temporarily paused (HTTP {{ blk.status_code }}: {{ blk.reason }}) — automatic retry after {{ blk.blocked_until_iso }}
+                        </span>
+                    </div>
+                {% endfor %}
+            </div>
+
+            {# New Since Last Visit Banner (Unseen Cron Discoveries) #}
+            <div
+                id="unseenDiscoveriesBanner"
+                class="{{ analytics.unseen_total == 0 ? 'hidden' : '' }} px-4 py-3 rounded-lg border border-cyan-900/80 bg-cyan-950/30 flex flex-wrap items-center justify-between gap-3 text-xs"
+            >
+                <div class="flex flex-wrap items-center gap-2 font-mono">
+                    <span class="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] font-semibold uppercase">New Since Last Visit</span>
+                    <span class="text-zinc-200">
+                        <strong id="liveUnseenRecommended" class="text-emerald-400">{{ analytics.unseen_recommended_count }}</strong> recommended deals
+                        (<span id="liveUnseenTotal" class="text-zinc-300">{{ analytics.unseen_total }}</span> total evaluated since {{ analytics.last_viewed_at ? analytics.last_viewed_at ~ ' UTC' : 'last 24h' }})
+                    </span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a
+                        href="{{ path('app_dashboard', baseParams|merge({'onlyNew': 1, 'sort': 'newest', 'page': 1})) }}"
+                        class="px-2.5 py-1 rounded bg-cyan-950 hover:bg-cyan-900 text-cyan-200 border border-cyan-800 font-mono text-[11px] transition-colors"
+                    >
+                        Show New Only
+                    </a>
+                    <form method="post" action="{{ path('app_dashboard_search_mark_seen', {'id': active_search.id}) }}">
+                        <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                        <button type="submit" class="px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-mono text-[11px] transition-colors">
+                            Mark All Seen
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            {# ==================== 1. HEADER & LIVE CRON BAR ==================== #}
+            <section class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-5">
+                <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+                    <div class="space-y-1.5">
+                        <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                            <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
+                                SEARCH #{{ active_search.id }}
+                            </span>
+                            <span
+                                id="searchStatusBadge"
+                                class="px-2 py-0.5 rounded border {{ active_search.status.value == 'completed'
+                                    ? 'bg-emerald-950/70 text-emerald-300 border-emerald-900'
+                                    : 'bg-amber-950/70 text-amber-300 border-amber-900' }}"
+                            >
+                                {{ active_search.status.value|upper }}
+                            </span>
+                            <span class="text-zinc-500">Created {{ active_search.createdAt|date('Y-m-d H:i') }} UTC</span>
+                            {% if active_search.cronTask %}
+                                <span class="px-2 py-0.5 rounded bg-zinc-950 text-zinc-300 border border-zinc-800">
+                                    Depth: {{ active_search.cronTask.limitPerSubTopic ? active_search.cronTask.limitPerSubTopic ~ ' / query' : 'Unlimited (All pages)' }}
+                                </span>
+                            {% endif %}
+                            {% if active_search.enableImages %}
+                                <span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">Vision Enabled</span>
+                            {% endif %}
+                        </div>
+
+                        <h2 class="text-xl sm:text-2xl font-semibold text-zinc-100 tracking-tight">
+                            {{ active_search.topic }}
+                        </h2>
+
+                        {% if active_search.userRequirements %}
+                            <p class="text-xs text-zinc-400 whitespace-pre-line">{{ active_search.userRequirements }}</p>
+                        {% endif %}
+
+                        {% if active_search.providerOptions is not empty %}
+                            <div class="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-mono">
+                                {% for pName, pOpts in active_search.providerOptions %}
+                                    {% set summaryParts = [] %}
+                                    {% if pOpts.sort is defined %}{% set summaryParts = summaryParts|merge(['sort:' ~ pOpts.sort]) %}{% endif %}
+                                    {% if pOpts.allow_shipping is defined and pOpts.allow_shipping %}{% set summaryParts = summaryParts|merge(['shipping']) %}{% endif %}
+                                    {% if pOpts.allow_near_me is defined and pOpts.allow_near_me and pOpts.location is defined and pOpts.location %}
+                                        {% set summaryParts = summaryParts|merge(['near:' ~ pOpts.location ~ ' (' ~ (pOpts.radius_km ?? 30) ~ 'km)']) %}
+                                    {% endif %}
+                                    {% if pOpts.search_in_title is defined and pOpts.search_in_title %}{% set summaryParts = summaryParts|merge(['title-only']) %}{% endif %}
+                                    {% if pOpts.owner_type is defined and pOpts.owner_type != 'all' %}{% set summaryParts = summaryParts|merge(['seller:' ~ pOpts.owner_type]) %}{% endif %}
+                                    {% if pOpts.min_condition is defined and pOpts.min_condition != 'all' %}{% set summaryParts = summaryParts|merge(['cond:' ~ pOpts.min_condition]) %}{% endif %}
+                                    {% if pOpts.min_price is defined and pOpts.min_price %}{% set summaryParts = summaryParts|merge(['min:' ~ pOpts.min_price ~ ' EUR']) %}{% endif %}
+                                    {% if summaryParts is not empty %}
+                                        <span class="px-2 py-0.5 rounded bg-zinc-950 text-zinc-400 border border-zinc-800">
+                                            <strong class="text-zinc-200 uppercase">{{ pName }}</strong>: {{ summaryParts|join(' | ') }}
+                                        </span>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    {# Action Toolbar #}
+                    <div class="flex flex-wrap items-center gap-2 shrink-0">
+                        <form method="post" action="{{ path('app_dashboard_search_refresh', {'id': active_search.id}) }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950 transition-colors">
+                                Fetch New Ads
+                            </button>
+                        </form>
+
+                        <form method="post" action="{{ path('app_dashboard_search_check_availability', {'id': active_search.id}) }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 transition-colors" title="Safely checks top unsold deals (score >= 50, max 50 ads) with polite rate-limiting">
+                                Check Availability
+                            </button>
+                        </form>
+
+                        <form
+                            method="post"
+                            action="{{ path('app_dashboard_search_reevaluate', {'id': active_search.id}) }}"
+                            onsubmit="return confirm('Re-evaluate all stored listings for Search #{{ active_search.id }} using strict AI rules?');"
+                        >
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-colors">
+                                Re-evaluate All (Strict AI)
+                            </button>
+                        </form>
+
+                        <form method="post" action="{{ path('app_dashboard_search_cron_toggle', {'id': active_search.id}) }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 transition-colors">
+                                {{ active_search.cronTask ? 'Pause Cron' : 'Enable Cron' }}
+                            </button>
+                        </form>
+
+                        <form
+                            method="post"
+                            action="{{ path('app_dashboard_search_delete', {'id': active_search.id}) }}"
+                            onsubmit="return confirm('Delete Search #{{ active_search.id }} and all stored listings?');"
+                        >
+                            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_action_' ~ active_search.id) }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-950 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 border border-zinc-800 hover:border-rose-900 transition-colors">
+                                Delete
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                {# Live Cron Schedule Panel #}
+                <div class="mt-4 pt-4 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Cron Status</div>
+                        <div class="mt-0.5 text-zinc-200" id="cronStatusText">
+                            {% if analytics.cron %}
+                                Active (Every {{ analytics.cron.interval_minutes }}m)
+                            {% else %}
+                                Disabled
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Last Run</div>
+                        <div class="mt-0.5 text-zinc-200" id="cronLastRun">
+                            {{ analytics.cron and analytics.cron.last_run_at ? analytics.cron.last_run_at ~ ' UTC' : 'Never' }}
+                        </div>
+                    </div>
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Next Scheduled Run</div>
+                        <div class="mt-0.5 text-zinc-200" id="cronNextRun">
+                            {{ analytics.cron ? analytics.cron.next_run_at ~ ' UTC' : '—' }}
+                        </div>
+                    </div>
+                    <div class="px-3 py-2 rounded-md bg-zinc-950/70 border border-zinc-800/80">
+                        <div class="text-[10px] uppercase text-zinc-500">Live Countdown / Runs</div>
+                        <div class="mt-0.5 flex items-center justify-between">
+                            <span class="text-emerald-400 font-semibold" id="cronCountdown">
+                                {{ analytics.cron ? '--:--' : 'Paused' }}
+                            </span>
+                            <span class="text-zinc-500" id="cronRunCount">
+                                {{ analytics.cron ? 'Runs: ' ~ analytics.cron.run_count : '' }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {# AI Sub-Topics Filter Row #}
+                <div class="mt-4 pt-3 border-t border-zinc-800/70 flex items-center gap-1.5 flex-wrap">
+                    <span class="text-[11px] font-mono uppercase text-zinc-500 mr-1">Sub-Topics:</span>
+                    <a
+                        href="{{ path('app_dashboard', baseParams|merge({'subTopic': null, 'page': 1})) }}"
+                        class="px-2 py-0.5 rounded text-[11px] font-mono transition-colors {{ filter.subTopic is null ? 'bg-zinc-100 text-zinc-950 font-medium' : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:border-zinc-600' }}"
+                    >
+                        All ({{ active_search.generatedSubTopics|length }})
+                    </a>
+                    {% for tag in active_search.generatedSubTopics %}
+                        {% set isActiveTag = filter.subTopic == tag %}
+                        <a
+                            href="{{ path('app_dashboard', baseParams|merge({'subTopic': isActiveTag ? null : tag, 'page': 1})) }}"
+                            class="px-2 py-0.5 rounded text-[11px] font-mono transition-colors {{ isActiveTag
+                                ? 'bg-zinc-100 text-zinc-950 font-medium'
+                                : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:border-zinc-600' }}"
+                        >
+                            {{ tag }}
+                        </a>
+                    {% endfor %}
+                </div>
+
+                {# Live Evaluation Progress #}
+                <div class="mt-4 pt-3 border-t border-zinc-800/70">
+                    <div class="flex items-center justify-between text-[11px] font-mono mb-1.5">
+                        <span class="text-zinc-400">
+                            Evaluation Progress: <strong class="text-zinc-200" id="liveEvaluatedAds">{{ analytics.total_evaluated_ads }}</strong> / <strong class="text-zinc-200" id="liveTotalAds">{{ analytics.total_stored_ads }}</strong> listings
+                        </span>
+                        <span class="text-zinc-200 font-medium" id="liveProgressPercent">{{ analytics.progress_percent }}%</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+                        <div id="liveProgressBar" class="h-full bg-zinc-200 transition-all duration-500" style="width: {{ analytics.progress_percent }}%"></div>
+                    </div>
+                </div>
+            </section>
+
+            {# ==================== 2. 5-TIER KPI CARDS ==================== #}
+            <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'must_buy' ? null : 'must_buy', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'must_buy' ? 'border-emerald-500 bg-emerald-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Must Buy (90-100)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-emerald-400" id="liveMustBuyCount">{{ analytics.must_buy_count }}</div>
+                </a>
+
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'extremely_good' ? null : 'extremely_good', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'extremely_good' ? 'border-sky-500 bg-sky-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Extremely Good (70-89)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-sky-400" id="liveExtremelyGoodCount">{{ analytics.extremely_good_count }}</div>
+                </a>
+
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'good' ? null : 'good', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'good' ? 'border-zinc-400 bg-zinc-800/50' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Good (50-69)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-zinc-200" id="liveGoodCount">{{ analytics.good_count }}</div>
+                </a>
+
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'bad' ? null : 'bad', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'bad' ? 'border-amber-500 bg-amber-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Bad (30-49)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-amber-400" id="liveBadCount">{{ analytics.bad_count }}</div>
+                </a>
+
+                <a
+                    href="{{ path('app_dashboard', baseParams|merge({'category': filter.category == 'poor' ? null : 'poor', 'page': 1})) }}"
+                    class="rounded-lg border {{ filter.category == 'poor' ? 'border-rose-500 bg-rose-950/30' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/60' }} p-3.5 transition-colors"
+                >
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Poor (0-29)</div>
+                    <div class="mt-1.5 text-2xl font-semibold font-mono text-rose-400" id="livePoorCount">{{ analytics.poor_count }}</div>
+                </a>
+
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3.5">
+                    <div class="text-[10px] font-mono uppercase text-zinc-500">Avg Score / Target</div>
+                    <div class="mt-1.5 flex items-baseline justify-between font-mono">
+                        <span class="text-2xl font-semibold text-zinc-100" id="liveAvgScore">{{ analytics.avg_score }}</span>
+                        <span class="text-xs text-zinc-400">{{ active_search.targetPrice|number_format(0) }} EUR</span>
+                    </div>
+                </div>
+            </section>
+
+            {# ==================== 3. LIVE CHARTS (2x2) ==================== #}
+            <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Cron Discoveries Timeline</h3>
+                        <span class="text-[10px] font-mono text-cyan-400">30m waves by tier (* = new since last visit)</span>
+                    </div>
+                    <div class="relative h-52">
+                        <canvas id="discoveryTimelineChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Score Tier Distribution</h3>
+                        <span class="text-[10px] font-mono text-zinc-500">5 brackets (active unsold)</span>
+                    </div>
+                    <div class="relative h-52">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Provider Comparison</h3>
+                        <span class="text-[10px] font-mono text-zinc-500">Total vs >= 50 Score</span>
+                    </div>
+                    <div class="relative h-52">
+                        <canvas id="providerChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 flex flex-col">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Score vs. Price Plot</h3>
+                        <span class="text-[10px] font-mono text-zinc-500">Top-left = best value</span>
+                    </div>
+                    <div class="relative h-52">
+                        <canvas id="scatterChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            {# Telemetry Matrix (Collapsible) #}
+            <details class="rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden group">
+                <summary class="px-4 py-3 cursor-pointer flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/70">
+                    <span>Sub-Topic & Provider Telemetry Matrix</span>
+                    <span class="text-zinc-500">Toggle</span>
+                </summary>
+                <div class="p-4 border-t border-zinc-800 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="text-[10px] font-mono uppercase text-zinc-500 mb-2">Sub-Topic Yield</h4>
+                        <div class="overflow-x-auto rounded-md border border-zinc-800">
+                            <table class="w-full text-left text-xs font-mono">
+                                <thead class="bg-zinc-950 text-zinc-500 uppercase text-[10px]">
+                                    <tr>
+                                        <th class="py-2 px-3">Tag</th>
+                                        <th class="py-2 px-3">Ads</th>
+                                        <th class="py-2 px-3">MB</th>
+                                        <th class="py-2 px-3">EG</th>
+                                        <th class="py-2 px-3">Avg / Max</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-zinc-800/70" id="subTopicTelemetryBody">
+                                    {% for st in analytics.sub_topic_stats %}
+                                        <tr class="hover:bg-zinc-800/30">
+                                            <td class="py-2 px-3 text-zinc-200">
+                                                <a href="{{ path('app_dashboard', baseParams|merge({'subTopic': st.tag, 'page': 1})) }}" class="hover:underline">{{ st.tag }}</a>
+                                            </td>
+                                            <td class="py-2 px-3 text-zinc-400">{{ st.stored_count }}</td>
+                                            <td class="py-2 px-3 text-emerald-400">{{ st.must_buy_count }}</td>
+                                            <td class="py-2 px-3 text-sky-400">{{ st.extremely_good_count }}</td>
+                                            <td class="py-2 px-3 text-zinc-300">{{ st.avg_score }} / {{ st.max_score }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="text-[10px] font-mono uppercase text-zinc-500 mb-2">Provider Breakdown</h4>
+                        <div class="overflow-x-auto rounded-md border border-zinc-800">
+                            <table class="w-full text-left text-xs font-mono">
+                                <thead class="bg-zinc-950 text-zinc-500 uppercase text-[10px]">
+                                    <tr>
+                                        <th class="py-2 px-3">Provider</th>
+                                        <th class="py-2 px-3">Stored</th>
+                                        <th class="py-2 px-3">Evaluated</th>
+                                        <th class="py-2 px-3">MB / EG / G</th>
+                                        <th class="py-2 px-3">Avg Score</th>
+                                        <th class="py-2 px-3">Avg Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-zinc-800/70" id="providerTelemetryBody">
+                                    {% for p in analytics.provider_stats %}
+                                        <tr class="hover:bg-zinc-800/30">
+                                            <td class="py-2 px-3 text-zinc-200">{{ p.name }}</td>
+                                            <td class="py-2 px-3 text-zinc-400">{{ p.stored_count }}</td>
+                                            <td class="py-2 px-3 text-zinc-400">{{ p.evaluated_count }}</td>
+                                            <td class="py-2 px-3">
+                                                <span class="text-emerald-400">{{ p.must_buy_count }}</span> /
+                                                <span class="text-sky-400">{{ p.extremely_good_count }}</span> /
+                                                <span class="text-zinc-300">{{ p.good_count }}</span>
+                                            </td>
+                                            <td class="py-2 px-3 text-zinc-200">{{ p.avg_score }}/100</td>
+                                            <td class="py-2 px-3 text-zinc-300">{{ p.avg_price|number_format(2) }} EUR</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            {# ==================== 4. FILTER & SORT TOOLBAR ==================== #}
+            <section class="rounded-lg border border-zinc-800 bg-zinc-900/95 p-3.5 sticky top-2 z-20 backdrop-blur">
+                <form method="get" action="{{ path('app_dashboard') }}" class="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+                    <input type="hidden" name="search" value="{{ active_search.id }}">
+                    <input type="hidden" name="sort" value="{{ filter.sort }}">
+                    <input type="hidden" name="view" value="{{ filter.view }}">
+                    <input type="hidden" name="page" value="1">
+                    {% if filter.subTopic %}<input type="hidden" name="subTopic" value="{{ filter.subTopic }}">{% endif %}
+                    {% if filter.category %}<input type="hidden" name="category" value="{{ filter.category }}">{% endif %}
+                    {% if filter.provider %}<input type="hidden" name="provider" value="{{ filter.provider }}">{% endif %}
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        {# Sort Toggle (Category / Score / Price / Date) #}
+                        {% set activeSort = filter.normalizedSort %}
+                        <div class="inline-flex flex-wrap rounded-md bg-zinc-950 p-0.5 border border-zinc-800">
+                            <a
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'category', 'page': 1})) }}"
+                                class="px-2 py-1 rounded text-xs font-medium {{ activeSort == 'category' ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
+                            >
+                                Category
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'score', 'page': 1})) }}"
+                                class="px-2 py-1 rounded text-xs font-medium {{ activeSort == 'score' ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
+                            >
+                                Score
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'price_asc', 'page': 1})) }}"
+                                class="px-2 py-1 rounded text-xs font-medium {{ activeSort == 'price_asc' ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
+                            >
+                                Price Asc
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'price_desc', 'page': 1})) }}"
+                                class="px-2 py-1 rounded text-xs font-medium {{ activeSort == 'price_desc' ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
+                            >
+                                Price Desc
+                            </a>
+                            <a
+                                href="{{ path('app_dashboard', baseParams|merge({'sort': 'newest', 'page': 1})) }}"
+                                class="px-2 py-1 rounded text-xs font-medium {{ activeSort == 'newest' ? 'bg-zinc-200 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200' }}"
+                            >
+                                Newest
+                            </a>
+                        </div>
+
+                        {# Category Pills #}
+                        <div class="inline-flex flex-wrap rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-xs">
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': null, 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory is null ? 'bg-zinc-800 text-zinc-100 font-medium' : 'text-zinc-400 hover:text-zinc-200' }}">All</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'must_buy', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'must_buy' ? 'bg-emerald-900 text-emerald-100 font-medium' : 'text-zinc-400 hover:text-emerald-300' }}">Must Buy</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'extremely_good', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'extremely_good' ? 'bg-sky-900 text-sky-100 font-medium' : 'text-zinc-400 hover:text-sky-300' }}">Ext. Good</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'good', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'good' ? 'bg-zinc-700 text-zinc-100 font-medium' : 'text-zinc-400 hover:text-zinc-200' }}">Good</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'bad', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'bad' ? 'bg-amber-900 text-amber-100 font-medium' : 'text-zinc-400 hover:text-amber-300' }}">Bad</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'category': 'poor', 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.resolvedCategory and filter.resolvedCategory.value == 'poor' ? 'bg-rose-900 text-rose-100 font-medium' : 'text-zinc-400 hover:text-rose-300' }}">Poor</a>
+                        </div>
+
+                        {# Provider Filter #}
+                        <div class="inline-flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-xs font-mono">
+                            <a href="{{ path('app_dashboard', baseParams|merge({'provider': null, 'page': 1})) }}" class="px-2 py-1 rounded {{ filter.normalizedProvider is null ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200' }}">All</a>
+                            {% for pName in ['leboncoin', 'vinted'] %}
+                                <a href="{{ path('app_dashboard', baseParams|merge({'provider': pName, 'page': 1})) }}" class="px-2 py-1 rounded uppercase {{ filter.normalizedProvider == pName ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200' }}">{{ pName }}</a>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input
+                            type="text"
+                            name="q"
+                            value="{{ filter.q }}"
+                            placeholder="Search title or appraisal..."
+                            class="px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 w-44"
+                        >
+
+                        <input
+                            type="number"
+                            name="maxPrice"
+                            step="1"
+                            min="1"
+                            value="{{ filter.maxPrice }}"
+                            placeholder="Max EUR"
+                            class="px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 w-24"
+                        >
+
+                        <select name="perPage" onchange="this.form.submit()" class="px-2 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-300 focus:outline-none focus:border-zinc-500">
+                            {% for size in [10, 20, 50, 100] %}
+                                <option value="{{ size }}" {{ filter.normalizedPerPage == size ? 'selected' : '' }}>{{ size }} / page</option>
+                            {% endfor %}
+                        </select>
+
+                        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-950 border {{ filter.onlyNew ? 'border-cyan-700 text-cyan-300' : 'border-zinc-800 text-zinc-400' }} text-xs cursor-pointer">
+                            <input type="checkbox" name="onlyNew" value="1" {{ filter.onlyNew ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-zinc-700 bg-zinc-900">
+                            <span>New Only</span>
+                        </label>
+
+                        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-400 cursor-pointer">
+                            <input type="checkbox" name="onlyWorking" value="1" {{ filter.onlyWorking ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-zinc-700 bg-zinc-900">
+                            <span>Working</span>
+                        </label>
+
+                        {% if filter.resolvedCategory is null %}
+                            <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-400 cursor-pointer">
+                                <input type="checkbox" name="showPoor" value="1" {{ filter.showPoor ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-zinc-700 bg-zinc-900">
+                                <span>Include Poor</span>
+                            </label>
+                        {% endif %}
+
+                        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs text-zinc-400 cursor-pointer" title="Include ads flagged as sold/pending ({{ analytics.sold_count }} hidden)">
+                            <input type="checkbox" name="showSold" value="1" {{ filter.showSold ? 'checked' : '' }} onchange="this.form.submit()" class="rounded border-zinc-700 bg-zinc-900">
+                            <span>Include Sold ({{ analytics.sold_count }})</span>
+                        </label>
+
+                        <button type="submit" class="px-3 py-1.5 rounded-md bg-zinc-200 hover:bg-white text-zinc-950 text-xs font-medium transition-colors">
+                            Filter
+                        </button>
+
+                        {# View Toggle #}
+                        <div class="inline-flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-xs">
+                            <a href="{{ path('app_dashboard', baseParams|merge({'view': 'cards'})) }}" class="px-2 py-1 rounded {{ not filter.isTableView ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200' }}">Cards</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'view': 'table'})) }}" class="px-2 py-1 rounded {{ filter.isTableView ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200' }}">Table</a>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            {# ==================== 5. RESULTS & PAGINATION ==================== #}
+            {% set startRank = ((pagination.page - 1) * pagination.per_page) %}
+
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono text-zinc-400">
+                <div>
+                    Showing <strong class="text-zinc-200">{{ pagination.total > 0 ? startRank + 1 : 0 }}-{{ min(startRank + pagination.items|length, pagination.total) }}</strong>
+                    of <strong class="text-zinc-200">{{ pagination.total }}</strong> matching listings (Page {{ pagination.page }} / {{ pagination.total_pages }})
+                </div>
+                {% if pagination.total_pages > 1 %}
+                    <nav class="inline-flex items-center gap-1">
+                        {% if pagination.page > 1 %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page - 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Prev</a>
+                        {% endif %}
+                        {% for p in max(1, pagination.page - 2)..min(pagination.total_pages, pagination.page + 2) %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': p})) }}" class="px-2.5 py-1 rounded border {{ p == pagination.page ? 'border-zinc-200 bg-zinc-100 text-zinc-950 font-semibold' : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300' }}">{{ p }}</a>
+                        {% endfor %}
+                        {% if pagination.page < pagination.total_pages %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page + 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Next</a>
+                        {% endif %}
+                    </nav>
+                {% endif %}
+            </div>
+
+            {% if filtered_evaluations is empty %}
+                <section class="rounded-lg border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center space-y-3">
+                    <h3 class="text-sm font-semibold text-zinc-200">No listings match the current filters</h3>
+                    <p class="text-xs text-zinc-500 max-w-md mx-auto">
+                        Adjust your category, price, or search filters above, or enable "Include Poor" to inspect rejected ads.
+                    </p>
+                    <div>
+                        <a href="{{ path('app_dashboard', {'search': active_search.id, 'showPoor': 1}) }}" class="inline-flex items-center px-3.5 py-1.5 rounded-md text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-100">
+                            Reset Filters & Show All
+                        </a>
+                    </div>
+                </section>
+            {% elseif filter.isTableView %}
+                {# ---------- COMPACT TABLE VIEW ---------- #}
+                <section class="rounded-lg border border-zinc-800 bg-zinc-900/60 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-zinc-950 text-zinc-500 font-mono uppercase text-[10px] border-b border-zinc-800">
+                                <tr>
+                                    <th class="py-2.5 px-3">#</th>
+                                    <th class="py-2.5 px-3">Score</th>
+                                    <th class="py-2.5 px-3">Tier</th>
+                                    <th class="py-2.5 px-3">Provider</th>
+                                    <th class="py-2.5 px-3">Listing & AI Appraisal</th>
+                                    <th class="py-2.5 px-3">Price</th>
+                                    <th class="py-2.5 px-3">Sub-Scores</th>
+                                    <th class="py-2.5 px-3 text-right">Link</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-zinc-800/70">
+                                {% for eval in filtered_evaluations %}
+                                    {% set l = eval.listing %}
+                                    {% set cat = eval.category.value %}
+                                    <tr class="hover:bg-zinc-800/30 align-top">
+                                        <td class="py-3 px-3 font-mono text-zinc-500">{{ startRank + loop.index }}</td>
+                                        <td class="py-3 px-3 font-mono font-semibold {{ cat == 'must_buy' ? 'text-emerald-400' : (cat == 'extremely_good' ? 'text-sky-400' : (cat == 'good' ? 'text-zinc-200' : (cat == 'bad' ? 'text-amber-400' : 'text-rose-400'))) }}">
+                                            {{ eval.scoreOutOf100 }}/100
+                                        </td>
+                                        <td class="py-3 px-3 font-mono text-[11px] text-zinc-300 whitespace-nowrap">{{ eval.category.shortLabel }}</td>
+                                        <td class="py-3 px-3 font-mono uppercase text-zinc-300">
+                                            {{ l.provider }}
+                                            <div class="text-[10px] text-zinc-500 normal-case">{{ l.searchTopicUsed }}</div>
+                                        </td>
+                                        <td class="py-3 px-3 max-w-xl">
+                                            <a href="{{ l.url }}" target="_blank" class="font-medium text-zinc-100 hover:underline inline-flex items-center gap-1.5 mb-1">
+                                                <span>{{ l.title }}</span>
+                                                {% if active_search.lastViewedAt and eval.evaluatedAt > active_search.lastViewedAt %}
+                                                    <span class="px-1 py-0.2 rounded text-[9px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800">NEW</span>
+                                                {% endif %}
+                                                {% if l.isSold %}
+                                                    <span class="px-1 py-0.2 rounded text-[9px] font-mono bg-zinc-800 text-zinc-400 border border-zinc-700 line-through">SOLD</span>
+                                                {% endif %}
+                                            </a>
+                                            <div class="p-2 rounded bg-zinc-950/80 border-l-2 border-zinc-600 text-zinc-400 text-[11px] leading-relaxed">
+                                                {{ eval.aiReasoning }}
+                                            </div>
+                                        </td>
+                                        <td class="py-3 px-3 font-mono font-semibold text-zinc-100 whitespace-nowrap">
+                                            {{ l.price|number_format(2) }} {{ l.currency }}
+                                        </td>
+                                        <td class="py-3 px-3 font-mono text-[10px] text-zinc-400 whitespace-nowrap">
+                                            <div>R:{{ eval.relevanceScore }} P:{{ eval.priceScore }}</div>
+                                            <div>W:{{ eval.workingConditionScore }} A:{{ eval.productAgeScore }}</div>
+                                        </td>
+                                        <td class="py-3 px-3 text-right whitespace-nowrap">
+                                            <a href="{{ l.url }}" target="_blank" class="px-2.5 py-1 rounded bg-zinc-100 hover:bg-white text-zinc-950 font-medium">Open</a>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            {% elseif not filter.isGroupedByCategory or filter.resolvedCategory is not null %}
+                <section class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {% for eval in filtered_evaluations %}
+                        {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': startRank + loop.index, 'active_search': active_search} %}
+                    {% endfor %}
+                </section>
+            {% else %}
+                {# ---------- GROUPED BY 5 TIERS ---------- #}
+                {% set tierDefinitions = [
+                    {'key': 'must_buy', 'title': 'Must Buy (90-100)', 'color': 'text-emerald-400', 'border': 'border-emerald-900/70'},
+                    {'key': 'extremely_good', 'title': 'Extremely Good (70-89)', 'color': 'text-sky-400', 'border': 'border-sky-900/70'},
+                    {'key': 'good', 'title': 'Good (50-69)', 'color': 'text-zinc-200', 'border': 'border-zinc-800'},
+                    {'key': 'bad', 'title': 'Bad (30-49)', 'color': 'text-amber-400', 'border': 'border-amber-900/60'},
+                    {'key': 'poor', 'title': 'Poor (0-29)', 'color': 'text-rose-400', 'border': 'border-rose-900/60'}
+                ] %}
+
+                {% set runningRank = startRank %}
+                {% for tier in tierDefinitions %}
+                    {% set items = grouped_evaluations[tier.key] %}
+                    {% if items is not empty %}
+                        <section class="space-y-3">
+                            <div class="flex items-center justify-between border-b {{ tier.border }} pb-2">
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-sm font-mono font-semibold uppercase tracking-wider {{ tier.color }}">
+                                        {{ tier.title }}
+                                    </h3>
+                                    <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-900 text-zinc-400 border border-zinc-800">
+                                        {{ items|length }} on page
+                                    </span>
+                                </div>
+                                <a href="{{ path('app_dashboard', baseParams|merge({'category': tier.key, 'page': 1})) }}" class="text-[11px] font-mono text-zinc-400 hover:text-zinc-200">
+                                    Filter tier
+                                </a>
+                            </div>
+
+                            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                {% for eval in items %}
+                                    {% set runningRank = runningRank + 1 %}
+                                    {% include 'dashboard/_listing_card.html.twig' with {'eval': eval, 'rank': runningRank, 'active_search': active_search} %}
+                                {% endfor %}
+                            </div>
+                        </section>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+
+            {# Bottom Pagination Controls #}
+            {% if pagination.total_pages > 1 %}
+                <div class="pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono">
+                    <span class="text-zinc-500">Page {{ pagination.page }} of {{ pagination.total_pages }} ({{ pagination.total }} items)</span>
+                    <nav class="inline-flex items-center gap-1">
+                        {% if pagination.page > 1 %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">First</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page - 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Prev</a>
+                        {% endif %}
+                        {% for p in max(1, pagination.page - 3)..min(pagination.total_pages, pagination.page + 3) %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': p})) }}" class="px-2.5 py-1 rounded border {{ p == pagination.page ? 'border-zinc-200 bg-zinc-100 text-zinc-950 font-semibold' : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300' }}">{{ p }}</a>
+                        {% endfor %}
+                        {% if pagination.page < pagination.total_pages %}
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.page + 1})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200">Next</a>
+                            <a href="{{ path('app_dashboard', baseParams|merge({'page': pagination.total_pages})) }}" class="px-2.5 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">Last</a>
+                        {% endif %}
+                    </nav>
+                </div>
+            {% endif %}
+        {% else %}
+            <section class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-12 text-center space-y-4">
+                <h2 class="text-lg font-semibold text-zinc-100">Listing Finder Dashboard</h2>
+                <p class="text-xs text-zinc-400 max-w-md mx-auto">
+                    Create a search request to expand keywords via Ollama, fetch marketplace listings, and score deals strictly against your specifications.
+                </p>
+                <button type="button" onclick="document.getElementById('newSearchModal').classList.remove('hidden')" class="px-4 py-2 rounded-md text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950">
+                    New Search Request
+                </button>
+            </section>
+        {% endif %}
+    </main>
+</div>
+
+{# ==================== NEW SEARCH MODAL ==================== #}
+<div id="newSearchModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+    <div class="w-full max-w-2xl rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+        <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60 shrink-0">
+            <h3 class="text-sm font-semibold text-zinc-100">New Search Request</h3>
+            <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="text-zinc-400 hover:text-white text-xs font-mono">Close</button>
+        </div>
+
+        <form method="post" action="{{ path('app_dashboard_search_new') }}" class="p-5 space-y-4 text-xs overflow-y-auto">
+            <input type="hidden" name="_token" value="{{ csrf_token('dashboard_new_search') }}">
+
+            <div>
+                <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Product Specification & Requirements *</label>
+                <textarea
+                    name="topic"
+                    rows="5"
+                    required
+                    placeholder="Describe precisely what you are looking for, or enter an exact product/model name (e.g. Canon printer AX380 in working condition with power cable, or describe desired technical specifications, features, capacity, and condition)..."
+                    class="w-full px-3 py-2.5 rounded-md bg-zinc-950 border border-zinc-800 text-zinc-100 leading-relaxed focus:outline-none focus:border-zinc-500"
+                ></textarea>
+                <p class="mt-1 text-[11px] text-zinc-500">
+                    Write your full product description and requirements in a single place. The AI will generate multiple search titles/scopes to match how different sellers list this item.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Target Price (EUR) *</label>
+                    <input type="number" name="target_price" step="0.5" min="1" value="50" required class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">AI Searches Count</label>
+                    <input type="number" name="sub_topics_count" min="1" max="15" placeholder="Auto (AI)" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Max Ads / Query</label>
+                    <input type="number" name="limit" min="1" max="5000" placeholder="Unlimited" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500" title="Leave blank to crawl all available pages (up to server page cap)">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Cron (minutes)</label>
+                    <input type="number" name="interval" min="5" max="1440" value="30" class="w-full px-3 py-2 rounded-md bg-zinc-950 border border-zinc-800 font-mono text-zinc-100 focus:outline-none focus:border-zinc-500">
+                </div>
+            </div>
+
+            {# Providers Selector + DRY Dynamic Per-Provider Options Panels #}
+            {% set selectableProviders = available_providers|filter(p => p != 'mock') %}
+            {% if selectableProviders is empty %}
+                {% set selectableProviders = ['leboncoin', 'vinted', 'backmarket'] %}
+            {% endif %}
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-[11px] font-mono uppercase text-zinc-400 mb-1.5">Providers</label>
+                    <div class="flex flex-wrap gap-2">
+                        {% for p in selectableProviders %}
+                            <label class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-zinc-950 border border-zinc-800 font-mono uppercase text-[11px] cursor-pointer">
+                                <input type="checkbox" name="providers[]" value="{{ p }}" checked class="rounded provider-toggle-checkbox" data-provider="{{ p }}">
+                                <span>{{ p }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                {# Dynamic Option Cards driven purely by ListingProviderInterface::getOptionDefinitions() #}
+                {% for pName, definitions in provider_option_schemas %}
+                    <details open class="rounded-md border border-zinc-800 bg-zinc-950/60 overflow-hidden provider-options-panel" data-provider-panel="{{ pName }}">
+                        <summary class="px-3.5 py-2 cursor-pointer flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-zinc-300 bg-zinc-950 hover:bg-zinc-900">
+                            <span>{{ pName }} Options</span>
+                            <span class="text-[10px] text-zinc-500">{{ definitions|length }} settings</span>
+                        </summary>
+                        <input type="hidden" name="provider_options[{{ pName }}][_submitted]" value="1">
+                        <div class="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-zinc-800/80">
+                            {% for opt in definitions %}
+                                <div
+                                    class="space-y-1 {{ opt.type == 'checkbox' ? 'sm:col-span-2' : '' }}"
+                                    {% if opt.dependsOn %}data-depends-provider="{{ pName }}" data-depends-field="{{ opt.dependsOn }}"{% endif %}
+                                >
+                                    {% if opt.type == 'checkbox' %}
+                                        <label class="inline-flex items-start gap-2 text-zinc-200 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                                value="1"
+                                                {{ opt.default ? 'checked' : '' }}
+                                                class="mt-0.5 rounded provider-dep-controller"
+                                                data-provider="{{ pName }}"
+                                                data-field="{{ opt.name }}"
+                                            >
+                                            <span>
+                                                <span class="font-medium">{{ opt.label }}</span>
+                                                {% if opt.help %}
+                                                    <span class="block text-[10px] text-zinc-500">{{ opt.help }}</span>
+                                                {% endif %}
+                                            </span>
+                                        </label>
+                                    {% elseif opt.type == 'select' %}
+                                        <label class="block text-[10px] font-mono uppercase text-zinc-400">{{ opt.label }}</label>
+                                        <select
+                                            name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                            class="w-full px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 focus:outline-none focus:border-zinc-500"
+                                        >
+                                            {% for val, choiceLabel in opt.choices %}
+                                                <option value="{{ val }}" {{ opt.default == val ? 'selected' : '' }}>{{ choiceLabel }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        {% if opt.help %}<p class="text-[10px] text-zinc-500">{{ opt.help }}</p>{% endif %}
+                                    {% elseif opt.type == 'number' %}
+                                        <label class="block text-[10px] font-mono uppercase text-zinc-400">{{ opt.label }}</label>
+                                        <input
+                                            type="number"
+                                            name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                            value="{{ opt.default }}"
+                                            {% if opt.min is not null %}min="{{ opt.min }}"{% endif %}
+                                            {% if opt.max is not null %}max="{{ opt.max }}"{% endif %}
+                                            placeholder="{{ opt.placeholder ?? '' }}"
+                                            class="w-full px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+                                        >
+                                        {% if opt.help %}<p class="text-[10px] text-zinc-500">{{ opt.help }}</p>{% endif %}
+                                    {% else %}
+                                        <label class="block text-[10px] font-mono uppercase text-zinc-400">{{ opt.label }}</label>
+                                        <input
+                                            type="text"
+                                            name="provider_options[{{ pName }}][{{ opt.name }}]"
+                                            value="{{ opt.default }}"
+                                            placeholder="{{ opt.placeholder ?? '' }}"
+                                            class="w-full px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+                                        >
+                                        {% if opt.help %}<p class="text-[10px] text-zinc-500">{{ opt.help }}</p>{% endif %}
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                {% endfor %}
+            </div>
+
+            <div>
+                <label class="inline-flex items-start gap-2 {{ vision_supported ? 'text-zinc-300 cursor-pointer' : 'text-zinc-500 opacity-60 cursor-not-allowed' }}">
+                    <input
+                        type="checkbox"
+                        name="enable_images"
+                        value="1"
+                        class="mt-0.5 rounded {{ not vision_supported ? 'opacity-50 cursor-not-allowed' : '' }}"
+                        {{ not vision_supported ? 'disabled' : '' }}
+                    >
+                    <span>
+                        <span>Enable Vision AI photo inspection</span>
+                        {% if not vision_supported %}
+                            <span class="block text-[10px] font-mono text-zinc-500">
+                                Unavailable — configured model ({{ vision_model }}) does not support vision
+                            </span>
+                        {% endif %}
+                    </span>
+                </label>
+            </div>
+
+            <div class="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
+                <button type="button" onclick="document.getElementById('newSearchModal').classList.add('hidden')" class="px-3.5 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300">Cancel</button>
+                <button type="submit" class="px-4 py-1.5 rounded-md font-medium bg-zinc-100 hover:bg-white text-zinc-950">Start Search</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block javascripts %}
+    <script>
+        (function () {
+            function syncProviderPanels() {
+                document.querySelectorAll('.provider-toggle-checkbox').forEach(function (checkbox) {
+                    const provider = checkbox.dataset.provider;
+                    const panel = document.querySelector(`.provider-options-panel[data-provider-panel="${provider}"]`);
+                    if (!panel) return;
+                    const enabled = checkbox.checked;
+                    panel.classList.toggle('hidden', !enabled);
+                    panel.querySelectorAll('input, select, textarea').forEach(function (el) {
+                        el.disabled = !enabled;
+                    });
+                });
+            }
+
+            function syncDependentFields() {
+                document.querySelectorAll('.provider-dep-controller').forEach(function (checkbox) {
+                    const provider = checkbox.dataset.provider;
+                    const field = checkbox.dataset.field;
+                    const visible = checkbox.checked;
+                    document.querySelectorAll(`[data-depends-provider="${provider}"][data-depends-field="${field}"]`).forEach(function (wrapper) {
+                        wrapper.classList.toggle('hidden', !visible);
+                    });
+                });
+            }
+
+            document.querySelectorAll('.provider-toggle-checkbox').forEach(function (checkbox) {
+                checkbox.addEventListener('change', function () {
+                    syncProviderPanels();
+                    syncDependentFields();
+                });
+            });
+
+            document.querySelectorAll('.provider-dep-controller').forEach(function (checkbox) {
+                checkbox.addEventListener('change', syncDependentFields);
+            });
+
+            syncProviderPanels();
+            syncDependentFields();
+        })();
+    </script>
+
+    {% if active_search and analytics %}
+    <script>
+        (function () {
+            Chart.defaults.color = '#71717a';
+            Chart.defaults.borderColor = 'rgba(39, 39, 42, 0.8)';
+            Chart.defaults.font.family = "'JetBrains Mono', monospace";
+            Chart.defaults.font.size = 10;
+
+            // 0. Cron Discoveries Timeline (Stacked Bar by Deal Tier)
+            let discoveryTimelineChart = null;
+            const timelineCtx = document.getElementById('discoveryTimelineChart');
+            if (timelineCtx) {
+                const timeline = {{ analytics.discovery_timeline|json_encode|raw }};
+                discoveryTimelineChart = new Chart(timelineCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: timeline.map(b => b.is_unseen ? b.label + ' *' : b.label),
+                        datasets: [
+                            { label: 'Must Buy', data: timeline.map(b => b.must_buy), backgroundColor: '#10b981', stack: 'tiers', borderRadius: 2 },
+                            { label: 'Ext. Good', data: timeline.map(b => b.extremely_good), backgroundColor: '#38bdf8', stack: 'tiers', borderRadius: 2 },
+                            { label: 'Good', data: timeline.map(b => b.good), backgroundColor: '#a1a1aa', stack: 'tiers', borderRadius: 2 },
+                            { label: 'Bad / Poor', data: timeline.map(b => b.bad_poor), backgroundColor: 'rgba(244, 63, 94, 0.45)', stack: 'tiers', borderRadius: 2 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { stacked: true },
+                            y: { stacked: true, beginAtZero: true }
+                        },
+                        plugins: {
+                            legend: { position: 'bottom', labels: { boxWidth: 8 } }
+                        }
+                    }
+                });
+            }
+
+            // 1. 5-Tier Score Distribution Bar/Doughnut
+            let categoryChart = null;
+            const catCtx = document.getElementById('categoryChart');
+            if (catCtx) {
+                categoryChart = new Chart(catCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Must Buy', 'Ext. Good', 'Good', 'Bad', 'Poor'],
+                        datasets: [{
+                            label: 'Listings',
+                            data: [
+                                {{ analytics.must_buy_count }},
+                                {{ analytics.extremely_good_count }},
+                                {{ analytics.good_count }},
+                                {{ analytics.bad_count }},
+                                {{ analytics.poor_count }}
+                            ],
+                            backgroundColor: [
+                                '#10b981',
+                                '#38bdf8',
+                                '#a1a1aa',
+                                '#f59e0b',
+                                '#f43f5e'
+                            ],
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // 2. Provider Comparison Chart
+            let providerChart = null;
+            const provCtx = document.getElementById('providerChart');
+            if (provCtx) {
+                const providerStats = {{ analytics.provider_stats|json_encode|raw }};
+                providerChart = new Chart(provCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: providerStats.map(p => p.name),
+                        datasets: [
+                            {
+                                label: 'Stored',
+                                data: providerStats.map(p => p.stored_count),
+                                backgroundColor: '#52525b',
+                                borderRadius: 4
+                            },
+                            {
+                                label: 'Score >= 50',
+                                data: providerStats.map(p => p.must_buy_count + p.extremely_good_count + p.good_count),
+                                backgroundColor: '#10b981',
+                                borderRadius: 4
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: { beginAtZero: true } },
+                        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } } }
+                    }
+                });
+            }
+
+            // 3. Score vs Price Scatter Plot
+            let scatterChart = null;
+            const scatterCtx = document.getElementById('scatterChart');
+            if (scatterCtx) {
+                const points = {{ analytics.scatter_points|json_encode|raw }};
+                scatterChart = new Chart(scatterCtx, {
+                    type: 'scatter',
+                    data: {
+                        datasets: [
+                            { label: 'Must Buy', data: points.filter(p => p.category === 'must_buy'), backgroundColor: '#10b981', pointRadius: 5 },
+                            { label: 'Ext. Good', data: points.filter(p => p.category === 'extremely_good'), backgroundColor: '#38bdf8', pointRadius: 4 },
+                            { label: 'Good', data: points.filter(p => p.category === 'good'), backgroundColor: '#a1a1aa', pointRadius: 3.5 },
+                            { label: 'Bad/Poor', data: points.filter(p => p.category === 'bad' || p.category === 'poor'), backgroundColor: 'rgba(244, 63, 94, 0.55)', pointRadius: 3 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { title: { display: true, text: 'Price (EUR)' }, beginAtZero: true },
+                            y: { title: { display: true, text: 'Score (/100)' }, min: 0, max: 100 }
+                        },
+                        plugins: {
+                            legend: { position: 'bottom', labels: { boxWidth: 8 } },
+                            tooltip: {
+                                callbacks: {
+                                    label: ctx => `[${ctx.raw.provider}] ${ctx.raw.title} - ${ctx.raw.x} EUR (${ctx.raw.y}/100)`
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 4. Live Cron Countdown Ticker (1-second precision)
+            let nextCronTimestamp = {{ analytics.cron ? ('"' ~ analytics.cron.next_run_iso ~ '"')|raw : 'null' }};
+            function updateCronCountdown() {
+                const el = document.getElementById('cronCountdown');
+                if (!el) return;
+                if (!nextCronTimestamp) {
+                    el.textContent = 'Paused';
+                    return;
+                }
+                const diffSec = Math.max(0, Math.floor((new Date(nextCronTimestamp).getTime() - Date.now()) / 1000));
+                if (diffSec === 0) {
+                    el.textContent = 'Due now';
+                    return;
+                }
+                const mins = Math.floor(diffSec / 60);
+                const secs = diffSec % 60;
+                el.textContent = `${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
+            }
+            updateCronCountdown();
+            setInterval(updateCronCountdown, 1000);
+
+            // 5. Continuous Live Data Polling (KPIs, Queue, Cron, Charts)
+            const searchId = {{ active_search.id }};
+            let autoRefreshEnabled = true;
+            const toggleBtn = document.getElementById('toggleAutoRefreshBtn');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    autoRefreshEnabled = !autoRefreshEnabled;
+                    toggleBtn.textContent = autoRefreshEnabled ? 'Auto-refresh: ON' : 'Auto-refresh: OFF';
+                });
+            }
+
+            async function pollLiveStatus() {
+                if (!autoRefreshEnabled) return;
+                try {
+                    const res = await fetch(`/api/dashboard/status/${searchId}`, { cache: 'no-store' });
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    // Global Telemetry
+                    const setText = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+                    if (data.global) {
+                        setText('globalTotalAds', data.global.total_listings);
+                        setText('globalEvaluatedCount', data.global.total_evaluated);
+                        setText('globalQueueCount', data.global.queued_messages);
+                        setText('globalActiveCrons', `${data.global.active_crons} cron`);
+                        const qEl = document.getElementById('globalQueueCount');
+                        if (qEl) {
+                            qEl.className = 'text-sm font-semibold font-mono ' + (data.global.queued_messages > 0 ? 'text-amber-400' : 'text-emerald-400');
+                        }
+                    }
+
+                    // Search KPIs & Progress
+                    setText('liveEvaluatedAds', data.evaluated_ads);
+                    setText('liveTotalAds', data.total_ads);
+                    setText('liveProgressPercent', data.progress_percent + '%');
+                    const bar = document.getElementById('liveProgressBar');
+                    if (bar) bar.style.width = data.progress_percent + '%';
+
+                    setText('liveMustBuyCount', data.must_buy_count);
+                    setText('liveExtremelyGoodCount', data.extremely_good_count);
+                    setText('liveGoodCount', data.good_count);
+                    setText('liveBadCount', data.bad_count);
+                    setText('livePoorCount', data.poor_count);
+                    setText('liveAvgScore', data.avg_score);
+
+                    const statusBadge = document.getElementById('searchStatusBadge');
+                    if (statusBadge && data.status) {
+                        statusBadge.textContent = data.status.toUpperCase();
+                        statusBadge.className = 'px-2 py-0.5 rounded border ' + (data.status === 'completed'
+                            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-900'
+                            : 'bg-amber-950/70 text-amber-300 border-amber-900');
+                    }
+
+                    // Live Cron Metadata
+                    if (data.cron) {
+                        setText('cronStatusText', `Active (Every ${data.cron.interval_minutes}m)`);
+                        setText('cronLastRun', data.cron.last_run_at ? data.cron.last_run_at + ' UTC' : 'Never');
+                        setText('cronNextRun', data.cron.next_run_at + ' UTC');
+                        setText('cronRunCount', 'Runs: ' + data.cron.run_count);
+                        nextCronTimestamp = data.cron.next_run_iso;
+                    } else {
+                        setText('cronStatusText', 'Disabled');
+                        setText('cronNextRun', '—');
+                        setText('cronRunCount', '');
+                        nextCronTimestamp = null;
+                    }
+
+                    // Live Update Unseen Banner & Provider Health
+                    setText('liveUnseenRecommended', data.unseen_recommended_count ?? 0);
+                    setText('liveUnseenTotal', data.unseen_total ?? 0);
+                    const unseenBanner = document.getElementById('unseenDiscoveriesBanner');
+                    if (unseenBanner) {
+                        unseenBanner.classList.toggle('hidden', (data.unseen_total ?? 0) === 0);
+                    }
+
+                    const healthBanner = document.getElementById('providerHealthBanner');
+                    if (healthBanner && Array.isArray(data.provider_health)) {
+                        if (data.provider_health.length === 0) {
+                            healthBanner.classList.add('hidden');
+                            healthBanner.innerHTML = '';
+                        } else {
+                            healthBanner.classList.remove('hidden');
+                            healthBanner.innerHTML = data.provider_health.map(b =>
+                                `<div class="px-4 py-2.5 rounded-lg border border-amber-800/80 bg-amber-950/50 text-amber-200 text-xs font-mono">
+                                    <strong class="uppercase">${b.provider}</strong> temporarily paused (HTTP ${b.status_code}: ${b.reason}) — automatic retry after ${b.blocked_until_iso}
+                                </div>`
+                            ).join('');
+                        }
+                    }
+
+                    // Live Update Charts
+                    if (discoveryTimelineChart && Array.isArray(data.discovery_timeline)) {
+                        const tl = data.discovery_timeline;
+                        discoveryTimelineChart.data.labels = tl.map(b => b.is_unseen ? b.label + ' *' : b.label);
+                        discoveryTimelineChart.data.datasets[0].data = tl.map(b => b.must_buy);
+                        discoveryTimelineChart.data.datasets[1].data = tl.map(b => b.extremely_good);
+                        discoveryTimelineChart.data.datasets[2].data = tl.map(b => b.good);
+                        discoveryTimelineChart.data.datasets[3].data = tl.map(b => b.bad_poor);
+                        discoveryTimelineChart.update('none');
+                    }
+
+                    if (categoryChart) {
+                        categoryChart.data.datasets[0].data = [
+                            data.must_buy_count,
+                            data.extremely_good_count,
+                            data.good_count,
+                            data.bad_count,
+                            data.poor_count
+                        ];
+                        categoryChart.update('none');
+                    }
+
+                    if (providerChart && Array.isArray(data.provider_stats)) {
+                        providerChart.data.labels = data.provider_stats.map(p => p.name);
+                        providerChart.data.datasets[0].data = data.provider_stats.map(p => p.stored_count);
+                        providerChart.data.datasets[1].data = data.provider_stats.map(p => p.must_buy_count + p.extremely_good_count + p.good_count);
+                        providerChart.update('none');
+                    }
+
+                    if (scatterChart && Array.isArray(data.scatter_points)) {
+                        scatterChart.data.datasets[0].data = data.scatter_points.filter(p => p.category === 'must_buy');
+                        scatterChart.data.datasets[1].data = data.scatter_points.filter(p => p.category === 'extremely_good');
+                        scatterChart.data.datasets[2].data = data.scatter_points.filter(p => p.category === 'good');
+                        scatterChart.data.datasets[3].data = data.scatter_points.filter(p => p.category === 'bad' || p.category === 'poor');
+                        scatterChart.update('none');
+                    }
+
+                    const nowStr = new Date().toLocaleTimeString([], { hour12: false });
+                    setText('liveLastSync', nowStr);
+                } catch (e) {
+                    // ignore transient errors
+                }
+            }
+
+            setInterval(pollLiveStatus, 5000);
+        })();
+    </script>
+    {% endif %}
+{% endblock %}
