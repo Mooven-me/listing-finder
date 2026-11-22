@@ -70,10 +70,15 @@ Twig, API Platform, Messenger, or Lock are installed unless one of those says so
   - `app:cron:run` & `app:search:stop`.
   - `app:ai:benchmark` (`AiBenchmarkCommand`): End-to-end CLI benchmark and verification of the 3-stage Agentic AI pipeline (`TopicExpansionAgent`, `Stage-1 Gatekeeper`, `Stage-2 Reasoning-First Evaluator + Guardrails`) with per-stage latency telemetry, 1,000-listing throughput projections across Local GPU VRAM tiers vs. rate-limited Cloud APIs, and `--json` export.
 
-### 8. Deployment Topologies
+### 8. Deployment Topologies & Documentation Structure
 - **Development (`compose.yaml` + `compose.override.yaml`)**: Runs `php` (FrankenPHP dev), `worker`, `searxng` (`docker/searxng/settings.yml` with JSON API enabled, `bing`+`duckduckgo`), and local `database` (PostgreSQL 16).
 - **Production Docker Compose (`compose.yaml` + `compose.prod.yaml`)**: Runs `php`, `worker`, and `searxng` using `.env.prod` and an external shared PostgreSQL database (no local database container).
 - **Production Kubernetes (`k8s/`)**: Kustomize manifests for **k3s + Traefik** in namespace `listing-finder` (`deployment-web.yaml`, `deployment-worker.yaml` with **1 replica** to prevent parallel IP bursts triggering marketplace 403s, `searxng.yaml`, `service.yaml`, `ingress.yaml`, `configmap.yaml`, `secret.example.yaml`). Connects to in-cluster PostgreSQL (`postgres-postgresql.postgres.svc.cluster.local:5432/listing_finder`), in-cluster SearXNG (`http://searxng:8080`), and Groq OpenAI-compatible API (`https://api.groq.com/openai/v1`, `openai/gpt-oss-120b`, `AI_MIN_REQUEST_INTERVAL_MS=9000`, private `AI_API_KEY` in `listing-finder-secret`). When reusing the `listing-finder:prod` image tag with `imagePullPolicy: IfNotPresent`, run `kubectl -n listing-finder rollout restart deployment/listing-finder-web deployment/listing-finder-worker` after importing into k3s containerd.
+- **Documentation (`README.md` & `docs/`)**:
+  - `README.md`: Concise, human-readable overview introducing what the application does using `docs/listing-finder_screen.png`, `docs/listing-finder_creation_screen.png`, and `docs/listing-finder_browsing_preview.gif`, followed by a quick installation setup and links to `docs/`.
+  - `docs/installation.md`: Detailed installation guide (Ollama vs. OpenAI-compatible setup, environment variables reference, Docker Compose prod, and k3s Kubernetes deployment).
+  - `docs/usage.md`: Complete user guide (writing specifications, per-provider options for LeBonCoin and Vinted, deal scoring tiers, dashboard analytics, cron/availability management, and CLI commands).
+  - `docs/architecture.md`: Technical deep-dive into the multi-stage AI pipeline, SearXNG datasheet verification, `ProviderHealthService` anti-bot pacing, and local GPU VRAM sizing.
 
 ---
 
