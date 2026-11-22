@@ -18,6 +18,7 @@ final class TopicExpansionAgent
         'looking', 'want', 'need', 'needs', 'very', 'good', 'great', 'best', 'nice', 'would', 'like', 'if', 'else', 'otherwise', 'possible', 'only', 'not', 'no', 'minimum', 'maximum', 'any', 'those', 'these', 'here', 'recap', 'recp',
         'avec', 'sans', 'moins', 'plus', 'dans', 'pour', 'une', 'des', 'les', 'aux', 'sur', 'chez', 'comme',
         'tres', 'très', 'bon', 'bonne', 'etat', 'état', 'cherche', 'recherche', 'de', 'du', 'la', 'le', 'un', 'et', 'ou',
+        'je', 'voudrais', 'veux', 'souhaite', 'fonctionnement', 'en',
     ];
 
     /** @var list<string> */

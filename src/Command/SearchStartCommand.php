@@ -113,6 +113,12 @@ class SearchStartCommand extends Command
 
         $io->title('Listing Finder - Search & Recurring Cron Setup');
 
+        $io->section('Step 1: Expanding Topic via AI Sub-Process');
+        $io->text(sprintf('Analyzing topic "%s" to generate marketplace search tags...', $topic));
+
+        $expansionResult = $this->topicExpansionAgent->expandTopic($topic, $requirements, $requestedSubTopicsCount);
+        $subTopics = $expansionResult->subTopics;
+
         $searchRequest = new SearchRequest(
             topic: $topic,
             targetPrice: $targetPrice,
@@ -121,17 +127,6 @@ class SearchStartCommand extends Command
             enabledProviders: $providerNames,
             providerOptions: $normalizedProviderOptions,
         );
-        $searchRequest->setStatus(SearchStatus::Expanding);
-
-        $this->entityManager->persist($searchRequest);
-        $this->entityManager->flush();
-
-        $io->section('Step 1: Expanding Topic via AI Sub-Process');
-        $io->text(sprintf('Analyzing topic "%s" to generate marketplace search tags...', $topic));
-
-        $expansionResult = $this->topicExpansionAgent->expandTopic($topic, $requirements, $requestedSubTopicsCount);
-        $subTopics = $expansionResult->subTopics;
-
         $searchRequest->setGeneratedSubTopics($subTopics);
         $searchRequest->setStatus(SearchStatus::Processing);
 
@@ -141,6 +136,7 @@ class SearchStartCommand extends Command
             limitPerSubTopic: $limit,
         );
         $searchRequest->setCronTask($cronTask);
+        $this->entityManager->persist($searchRequest);
         $this->entityManager->persist($cronTask);
         $this->entityManager->flush();
 
